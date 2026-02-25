@@ -10,159 +10,108 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 )
 
-// --- JWT Authentication Middleware (§2.6) ---
+/*
+API Key Authentication
 
-var jwtSecret = []byte(getEnvDefault("JWT_SECRET", "idep-dev-secret-change-in-production"))
+Usage:
+  Authorization: Bearer tp-proj-xxxxxxxxxxxx
 
-type Claims struct {
-	UserID string `json:"user_id"`
-	Role   string `json:"role"` // admin, operator, viewer
-	jwt.RegisteredClaims
+Keys are loaded from IDEP_API_KEYS environment variable:
+  IDEP_API_KEYS=tp-proj-abc123,tp-proj-def456,tp-test-xyz789
+
+Key prefixes:
+  tp-proj-*   Production keys (full access)
+  tp-test-*   Test keys (full access, marked as test in logs)
+
+No roles, no JWT, no tokens to manage.
+*/
+
+// ─── API Key Store ───
+
+var apiKeys = loadAPIKeys()
+
+type keyInfo struct {
+	key    string
+	isTest bool
 }
 
-func JWTAuth() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Missing Authorization header"})
-			return
-		}
-
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid Authorization format. Use: Bearer <token>"})
-			return
-		}
-
-		token, err := jwt.ParseWithClaims(parts[1], &Claims{}, func(token *jwt.Token) (interface{}, error) {
-			return jwtSecret, nil
-		})
-		if err != nil || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
-			return
-		}
-
-		claims, ok := token.Claims.(*Claims)
-		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
-			return
-		}
-
-		// Set user context
-		c.Set("user_id", claims.UserID)
-		c.Set("role", claims.Role)
-		c.Next()
-	}
-}
-
-// GenerateToken creates a JWT token (for testing/dev login)
-func GenerateToken(userID, role string) (string, error) {
-	claims := &Claims{
-		UserID: userID,
-		Role:   role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "idep-api-gateway",
-		},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
-}
-
-// --- API Key Authentication ---
-
-var validAPIKeys = loadAPIKeys()
-
-func APIKeyAuth() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		apiKey := c.GetHeader("X-API-Key")
-		if apiKey == "" {
-			apiKey = c.Query("api_key")
-		}
-		if apiKey == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Missing API key"})
-			return
-		}
-
-		role, ok := validAPIKeys[apiKey]
-		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
-			return
-		}
-
-		c.Set("user_id", "api-key-user")
-		c.Set("role", role)
-		c.Next()
-	}
-}
-
-func loadAPIKeys() map[string]string {
-	keys := make(map[string]string)
-	// Load from environment (comma-separated key:role pairs)
-	raw := getEnvDefault("API_KEYS", "dev-key-123:admin")
-	for _, pair := range strings.Split(raw, ",") {
-		parts := strings.SplitN(strings.TrimSpace(pair), ":", 2)
-		if len(parts) == 2 {
-			keys[parts[0]] = parts[1]
+func loadAPIKeys() []keyInfo {
+	raw := getEnvDefault("IDEP_API_KEYS", "tp-proj-dev-key-123")
+	var keys []keyInfo
+	for _, k := range strings.Split(raw, ",") {
+		k = strings.TrimSpace(k)
+		if k != "" {
+			keys = append(keys, keyInfo{
+				key:    k,
+				isTest: strings.HasPrefix(k, "tp-test-"),
+			})
 		}
 	}
 	return keys
 }
 
-// --- Combined Auth: Accept JWT OR API Key ---
+func isValidKey(provided string) (bool, bool) {
+	for _, k := range apiKeys {
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(k.key)) == 1 {
+			return true, k.isTest
+		}
+	}
+	return false, false
+}
+
+// ─── Auth Middleware ───
 
 func Auth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Try JWT first
-		if authHeader := c.GetHeader("Authorization"); authHeader != "" {
-			JWTAuth()(c)
-			return
-		}
-		// Fall back to API Key
-		if apiKey := c.GetHeader("X-API-Key"); apiKey != "" {
-			APIKeyAuth()(c)
-			return
-		}
-		if apiKey := c.Query("api_key"); apiKey != "" {
-			APIKeyAuth()(c)
+		apiKey := extractAPIKey(c)
+		if apiKey == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": map[string]interface{}{
+					"message": "Invalid Authentication",
+					"type":    "invalid_request_error",
+					"code":    "invalid_api_key",
+				},
+			})
 			return
 		}
 
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-			"error": "Authentication required. Provide Bearer token or X-API-Key header.",
-		})
+		valid, isTest := isValidKey(apiKey)
+		if !valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": map[string]interface{}{
+					"message": "Incorrect API key provided. You can find your API key at the dashboard.",
+					"type":    "invalid_request_error",
+					"code":    "invalid_api_key",
+				},
+			})
+			return
+		}
+
+		// Set context (no roles — just authenticated or not)
+		c.Set("api_key", apiKey)
+		c.Set("is_test", isTest)
+		c.Next()
 	}
 }
 
-// --- RBAC Middleware ---
-
-func RequireRole(roles ...string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		userRole, exists := c.Get("role")
-		if !exists {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "No role assigned"})
-			return
+func extractAPIKey(c *gin.Context) string {
+	// 1. Authorization: Bearer sk-proj-...
+	if auth := c.GetHeader("Authorization"); auth != "" {
+		parts := strings.SplitN(auth, " ", 2)
+		if len(parts) == 2 && strings.ToLower(parts[0]) == "bearer" {
+			return strings.TrimSpace(parts[1])
 		}
-
-		for _, r := range roles {
-			if subtle.ConstantTimeCompare([]byte(userRole.(string)), []byte(r)) == 1 {
-				c.Next()
-				return
-			}
-		}
-
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"error":          "Insufficient permissions",
-			"required_roles": roles,
-		})
 	}
+	// 2. X-API-Key header (backwards compat)
+	if key := c.GetHeader("X-API-Key"); key != "" {
+		return key
+	}
+	return ""
 }
 
-// --- Rate Limiting Middleware (§2.6: 100 req/min per key) ---
+// ─── Rate Limiting (per API key, 100 req/min) ───
 
 type rateLimiter struct {
 	mu       sync.Mutex
@@ -179,15 +128,17 @@ var limiter = &rateLimiter{
 
 func RateLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Rate limit by API key or IP
 		key := c.ClientIP()
-		if apiKey := c.GetHeader("X-API-Key"); apiKey != "" {
+		if auth := c.GetHeader("Authorization"); auth != "" {
+			key = auth
+		} else if apiKey := c.GetHeader("X-API-Key"); apiKey != "" {
 			key = apiKey
 		}
 
 		limiter.mu.Lock()
 		now := time.Now()
 
-		// Clean old entries
 		valid := make([]time.Time, 0)
 		for _, t := range limiter.requests[key] {
 			if now.Sub(t) < limiter.window {
@@ -199,22 +150,27 @@ func RateLimit() gin.HandlerFunc {
 		if len(valid) >= limiter.limit {
 			limiter.mu.Unlock()
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error":       "Rate limit exceeded",
-				"limit":       limiter.limit,
-				"window":      limiter.window.String(),
-				"retry_after": limiter.window.Seconds(),
+				"error": map[string]interface{}{
+					"message": "Rate limit reached. Please slow down.",
+					"type":    "rate_limit_error",
+					"code":    "rate_limit_exceeded",
+				},
 			})
 			return
 		}
 
 		limiter.requests[key] = append(limiter.requests[key], now)
+		remaining := limiter.limit - len(valid) - 1
 		limiter.mu.Unlock()
 
-		c.Header("X-RateLimit-Limit", "100")
-		c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", limiter.limit-len(valid)-1))
+		c.Header("x-ratelimit-limit-requests", "100")
+		c.Header("x-ratelimit-remaining-requests", fmt.Sprintf("%d", remaining))
+		c.Header("x-ratelimit-reset-requests", "60s")
 		c.Next()
 	}
 }
+
+// ─── Util ───
 
 func getEnvDefault(key, fallback string) string {
 	if v, ok := os.LookupEnv(key); ok {

@@ -62,7 +62,7 @@ func (s *server) Preprocess(ctx context.Context, req *preprocessing.PreprocessRe
 		}
 
 		// Enhance
-		allImages = enhanceImages(allImages, outputDir, req.JobId)
+		allImages = enhanceImages(allImages, outputDir, req.JobId, req.Deskew, req.Denoise)
 
 		return &preprocessing.PreprocessResponse{ImagePaths: allImages, Status: "success"}, nil
 	}
@@ -74,7 +74,7 @@ func (s *server) Preprocess(ctx context.Context, req *preprocessing.PreprocessRe
 	}
 
 	// ── Step 3: Image Enhancement Pipeline ──
-	imagePaths = enhanceImages(imagePaths, outputDir, req.JobId)
+	imagePaths = enhanceImages(imagePaths, outputDir, req.JobId, req.Deskew, req.Denoise)
 
 	log.Printf("✅ Preprocessed %d page(s) for job %s", len(imagePaths), req.JobId)
 	return &preprocessing.PreprocessResponse{ImagePaths: imagePaths, Status: "success"}, nil
@@ -196,7 +196,7 @@ func convertOfficeToImages(filePath, outputDir string) ([]string, error) {
 // Image Enhancement Pipeline (Python/OpenCV)
 // ══════════════════════════════════════════
 
-func enhanceImages(imagePaths []string, outputDir, jobID string) []string {
+func enhanceImages(imagePaths []string, outputDir, jobID string, deskew, denoise bool) []string {
 	enhancedDir := filepath.Join(outputDir, "enhanced")
 	os.MkdirAll(enhancedDir, 0755)
 
@@ -213,12 +213,22 @@ func enhanceImages(imagePaths []string, outputDir, jobID string) []string {
 	}
 
 	// Run Python enhancer (GLM-optimized mode)
-	cmd := exec.Command("python3", "image_enhancer.py", stageDir, enhancedDir, "glm")
+	// Passing deskew and denoise flags
+	deskewFlag := "true"
+	if !deskew {
+		deskewFlag = "false"
+	}
+	denoiseFlag := "true"
+	if !denoise {
+		denoiseFlag = "false"
+	}
+
+	cmd := exec.Command("python3", "image_enhancer.py", stageDir, enhancedDir, "glm", deskewFlag, denoiseFlag)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		log.Printf("⚠️ Image enhancement failed, using raw images: %v", err)
+		log.Printf("⚠️ Image enhancement failed, using raw images: %v, stderr: %s", err, stderr.String())
 		return imagePaths
 	}
 

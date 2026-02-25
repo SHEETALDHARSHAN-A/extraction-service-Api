@@ -501,13 +501,61 @@ class UniversalImageEnhancer:
     # Pipelines
     # ══════════════════════════════════════════
 
-    def _pipeline_glm(self, img: np.ndarray, profile: ImageProfile) -> np.ndarray:
+    def enhance(self, input_path: str, output_path: str = None, mode: str = "glm", deskew: bool = True, denoise: bool = True) -> str:
+        """
+        Main entry point. Analyzes the image, builds an adaptive pipeline,
+        and produces an enhanced output.
+
+        Args:
+            input_path: Path to input image
+            output_path: Optional output path
+            mode: "glm" (color-preserving for GLM-OCR) or "binary" (traditional OCR)
+            deskew: Whether to perform deskewing
+            denoise: Whether to perform denoising
+        """
+        if output_path is None:
+            base, ext = os.path.splitext(input_path)
+            output_path = f"{base}_enhanced{ext}"
+
+        img = cv2.imread(input_path)
+        if img is None:
+            raise ValueError(f"Cannot read image: {input_path}")
+
+        fname = os.path.basename(input_path)
+        logger.info(f"{'─'*50}")
+        logger.info(f"📸 Processing: {fname} ({img.shape[1]}x{img.shape[0]}) | deskew={deskew}, denoise={denoise}")
+
+        # ── Phase 1: Analyze ──
+        profile = self._analyze(img)
+        logger.info(f"  📊 Profile: type={profile.doc_type.value}, noise={profile.noise_level:.1f}, "
+                     f"contrast={profile.contrast:.1f}, sharpness={profile.sharpness:.1f}, "
+                     f"quality={profile.quality_score:.2f}")
+
+        # ── Phase 2: Orientation correction ──
+        if profile.orientation != 0:
+            img = self._fix_orientation(img, profile.orientation)
+
+        # ── Phase 3: Perspective correction (camera captures) ──
+        if profile.needs_perspective_fix:
+            img = self._fix_perspective(img)
+
+        # ── Phase 4: Apply mode-specific pipeline ──
+        if mode == "glm":
+            img = self._pipeline_glm(img, profile, deskew=deskew, denoise=denoise)
+        else:
+            img = self._pipeline_binary(img, profile, deskew=deskew, denoise=denoise)
+
+        cv2.imwrite(output_path, img, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+        logger.info(f"  ✅ Saved: {output_path}")
+        return output_path
+
+    def _pipeline_glm(self, img: np.ndarray, profile: ImageProfile, deskew: bool = True, denoise: bool = True) -> np.ndarray:
         """
         GLM-OCR optimized pipeline (color-preserving).
         GLM is a vision-language model — it performs best on natural-looking
         images with color and structure intact.
         """
-        logger.info("  🧠 Pipeline: GLM (color-preserving)")
+        logger.info(f"  🧠 Pipeline: GLM (deskew={deskew}, denoise={denoise})")
 
         # 1. Upscale if needed
         img = self._upscale(img)
@@ -517,7 +565,8 @@ class UniversalImageEnhancer:
             img = self._remove_shadows(img)
 
         # 3. Adaptive denoising
-        img = self._adaptive_denoise(img, profile.noise_level)
+        if denoise:
+            img = self._adaptive_denoise(img, profile.noise_level)
 
         # 4. Adaptive contrast
         img = self._adaptive_contrast(img, profile)
@@ -526,13 +575,14 @@ class UniversalImageEnhancer:
         img = self._sharpen(img, profile)
 
         # 6. Deskew
-        img = self._deskew(img, profile.skew_angle)
+        if deskew:
+            img = self._deskew(img, profile.skew_angle)
 
         return img
 
-    def _pipeline_binary(self, img: np.ndarray, profile: ImageProfile) -> np.ndarray:
+    def _pipeline_binary(self, img: np.ndarray, profile: ImageProfile, deskew: bool = True, denoise: bool = True) -> np.ndarray:
         """Binary pipeline for traditional OCR engines."""
-        logger.info("  ⬛ Pipeline: Binary (traditional OCR)")
+        logger.info(f"  ⬛ Pipeline: Binary (deskew={deskew}, denoise={denoise})")
 
         img = self._upscale(img)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
@@ -540,9 +590,13 @@ class UniversalImageEnhancer:
         if profile.needs_shadow_removal:
             gray = self._remove_shadows(gray)
 
-        gray = self._adaptive_denoise(gray, profile.noise_level)
+        if denoise:
+            gray = self._adaptive_denoise(gray, profile.noise_level)
+        
         gray = self._adaptive_contrast(gray, profile)
-        gray = self._deskew(gray, profile.skew_angle)
+        
+        if deskew:
+            gray = self._deskew(gray, profile.skew_angle)
 
         # Adaptive binarization
         binary = cv2.adaptiveThreshold(
@@ -562,7 +616,7 @@ class UniversalImageEnhancer:
 # Batch Processing
 # ══════════════════════════════════════════
 
-def process_directory(input_dir: str, output_dir: str, mode: str = "glm") -> list:
+def process_directory(input_dir: str, output_dir: str, mode: str = "glm", deskew: bool = True, denoise: bool = True) -> list:
     """Process all images in a directory."""
     os.makedirs(output_dir, exist_ok=True)
     enhancer = UniversalImageEnhancer()
@@ -574,7 +628,7 @@ def process_directory(input_dir: str, output_dir: str, mode: str = "glm") -> lis
             input_path = os.path.join(input_dir, fname)
             output_path = os.path.join(output_dir, fname)
             try:
-                enhancer.enhance(input_path, output_path, mode=mode)
+                enhancer.enhance(input_path, output_path, mode=mode, deskew=deskew, denoise=denoise)
                 results.append({"file": fname, "status": "success"})
             except Exception as e:
                 logger.error(f"Failed: {fname}: {e}")
@@ -586,11 +640,16 @@ def process_directory(input_dir: str, output_dir: str, mode: str = "glm") -> lis
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 3:
-        print("Usage: python image_enhancer.py <input_dir> <output_dir> [mode: glm|binary]")
+        print("Usage: python image_enhancer.py <input_dir> <output_dir> [mode: glm|binary] [deskew: true|false] [denoise: true|false]")
         sys.exit(1)
 
+    input_dir = sys.argv[1]
+    output_dir = sys.argv[2]
     mode = sys.argv[3] if len(sys.argv) > 3 else "glm"
-    results = process_directory(sys.argv[1], sys.argv[2], mode)
+    deskew = sys.argv[4].lower() == "true" if len(sys.argv) > 4 else True
+    denoise = sys.argv[5].lower() == "true" if len(sys.argv) > 5 else True
+
+    results = process_directory(input_dir, output_dir, mode, deskew, denoise)
 
     success = sum(1 for r in results if r["status"] == "success")
     print(f"\n{'═'*40}")

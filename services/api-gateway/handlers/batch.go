@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -16,7 +17,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// BatchUploadHandler handles multi-document batch uploads (FR-1.3)
+// BatchUploadHandler handles multi-document batch uploads
 type BatchUploadHandler struct {
 	DB             *gorm.DB
 	MinioStore     *storage.MinioClient
@@ -33,6 +34,7 @@ type batchResult struct {
 }
 
 // Handle processes a batch of uploaded documents (up to 10,000)
+// All user options (output_formats, prompt, coordinates, etc.) apply to every file.
 func (h *BatchUploadHandler) Handle(c *gin.Context) {
 	form, err := c.MultipartForm()
 	if err != nil {
@@ -50,8 +52,61 @@ func (h *BatchUploadHandler) Handle(c *gin.Context) {
 		return
 	}
 
+	// Parse options from form (same params as single upload)
+	outputFormats := c.DefaultPostForm("output_formats", "text")
+	customPrompt := c.DefaultPostForm("prompt", "")
+	includeCoordinates := c.DefaultPostForm("include_coordinates", "false") == "true"
+	includeWordConfidence := c.DefaultPostForm("include_word_confidence", "false") == "true"
+	includeLineConfidence := c.DefaultPostForm("include_line_confidence", "false") == "true"
+	includePageLayout := c.DefaultPostForm("include_page_layout", "false") == "true"
+	language := c.DefaultPostForm("language", "auto")
+	granularity := c.DefaultPostForm("granularity", "block")
+	redactPII := c.DefaultPostForm("redact_pii", "false") == "true"
+	enhance := c.DefaultPostForm("enhance", "true") == "true"
+	deskew := c.DefaultPostForm("deskew", "true") == "true"
+	maxPages := c.DefaultPostForm("max_pages", "0")
+	temperature := c.DefaultPostForm("temperature", "0.0")
+	maxTokens := c.DefaultPostForm("max_tokens", "4096")
+	webhookURL := c.DefaultPostForm("webhook_url", "")
+
+	// Validate formats
+	if customPrompt == "" {
+		validFormats := map[string]bool{
+			"text": true, "json": true, "markdown": true,
+			"table": true, "key_value": true, "structured": true,
+		}
+		for _, f := range strings.Split(outputFormats, ",") {
+			f = strings.TrimSpace(f)
+			if f != "" && !validFormats[f] {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":         fmt.Sprintf("Invalid output format: '%s'", f),
+					"valid_formats": []string{"text", "json", "markdown", "table", "key_value", "structured"},
+				})
+				return
+			}
+		}
+	}
+
 	batchID := uuid.New().String()
-	log.Printf("📦 Batch upload started: %s (%d files)", batchID, len(files))
+	log.Printf("📦 Batch %s: %d files, formats=%s", batchID, len(files), outputFormats)
+
+	// Options map applied to every file in batch
+	options := map[string]interface{}{
+		"prompt":                  customPrompt,
+		"include_coordinates":     includeCoordinates,
+		"include_word_confidence": includeWordConfidence,
+		"include_line_confidence": includeLineConfidence,
+		"include_page_layout":     includePageLayout,
+		"language":                language,
+		"granularity":             granularity,
+		"redact_pii":              redactPII,
+		"enhance":                 enhance,
+		"deskew":                  deskew,
+		"max_pages":               maxPages,
+		"temperature":             temperature,
+		"max_tokens":              maxTokens,
+		"webhook_url":             webhookURL,
+	}
 
 	results := make([]batchResult, len(files))
 	var wg sync.WaitGroup
@@ -86,7 +141,7 @@ func (h *BatchUploadHandler) Handle(c *gin.Context) {
 			job := models.Job{
 				ID: jobID, Filename: hdr.Filename, FileSize: hdr.Size,
 				ContentType: hdr.Header.Get("Content-Type"), StoragePath: storagePath,
-				Status: models.StatusUploaded, BatchID: batchID,
+				Status: models.StatusUploaded, BatchID: batchID, OutputFormats: outputFormats,
 			}
 			if err := h.DB.Create(&job).Error; err != nil {
 				results[idx] = batchResult{JobID: jobID, Filename: hdr.Filename, Status: "FAILED", Error: "DB insert failed"}
@@ -98,9 +153,14 @@ func (h *BatchUploadHandler) Handle(c *gin.Context) {
 				client.StartWorkflowOptions{ID: fmt.Sprintf("doc-processing-%s", jobID), TaskQueue: h.TaskQueue},
 				"DocumentProcessingWorkflow",
 				map[string]interface{}{
-					"job_id": jobID, "batch_id": batchID, "filename": hdr.Filename,
-					"storage_path": storagePath, "content_type": hdr.Header.Get("Content-Type"),
-					"file_ext": filepath.Ext(hdr.Filename),
+					"job_id":         jobID,
+					"batch_id":       batchID,
+					"filename":       hdr.Filename,
+					"storage_path":   storagePath,
+					"content_type":   hdr.Header.Get("Content-Type"),
+					"file_ext":       filepath.Ext(hdr.Filename),
+					"output_formats": outputFormats,
+					"options":        options,
 				},
 			)
 			if err != nil {
@@ -126,7 +186,12 @@ func (h *BatchUploadHandler) Handle(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{
-		"batch_id": batchID, "total": len(files),
-		"succeeded": succeeded, "failed": failed, "jobs": results,
+		"batch_id":       batchID,
+		"total":          len(files),
+		"succeeded":      succeeded,
+		"failed":         failed,
+		"output_formats": outputFormats,
+		"status_url":     fmt.Sprintf("/jobs/batch/%s", batchID),
+		"jobs":           results,
 	})
 }

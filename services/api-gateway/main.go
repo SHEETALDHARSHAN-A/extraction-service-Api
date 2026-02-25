@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -82,26 +83,22 @@ func main() {
 	// Public endpoints
 	r.GET("/health", healthCheck)
 	r.GET("/metrics", middleware.PrometheusHandler())
-	r.POST("/auth/token", issueToken) // Dev-only login
 
-	// Protected API routes
-	api := r.Group("/jobs")
+	// Authenticated API routes (Bearer API key)
+	api := r.Group("/")
 	api.Use(middleware.Auth())
 	{
-		api.POST("/upload", uploadDocument)
-		api.POST("/batch", batchHandler().Handle)
-		api.GET("/:id", getJobStatus)
-		api.GET("/:id/result", getJobResult)
-		api.GET("", listJobs)
-		api.GET("/batch/:batch_id", getBatchStatus)
-	}
+		// Document processing
+		api.POST("/jobs/upload", uploadDocument)
+		api.POST("/jobs/batch", batchHandler().Handle)
+		api.GET("/jobs", listJobs)
+		api.GET("/jobs/:id", getJobStatus)
+		api.GET("/jobs/:id/result", getJobResult)
+		api.GET("/jobs/batch/:batch_id", getBatchStatus)
 
-	// Admin routes (require admin role)
-	admin := r.Group("/admin")
-	admin.Use(middleware.Auth(), middleware.RequireRole("admin"))
-	{
-		admin.GET("/stats", getSystemStats)
-		admin.GET("/cache", getCacheStats)
+		// Platform
+		api.GET("/admin/stats", getSystemStats)
+		api.GET("/admin/cache", getCacheStats)
 	}
 
 	log.Printf("🚀 API Gateway starting on :%s", cfg.Port)
@@ -125,23 +122,6 @@ func healthCheck(c *gin.Context) {
 		"service": "idep-api-gateway",
 		"time":    time.Now().Format(time.RFC3339),
 	})
-}
-
-func issueToken(c *gin.Context) {
-	var req struct {
-		UserID string `json:"user_id" binding:"required"`
-		Role   string `json:"role" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	token, err := middleware.GenerateToken(req.UserID, req.Role)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Token generation failed"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"token": token, "expires_in": 900})
 }
 
 func uploadDocument(c *gin.Context) {
@@ -194,13 +174,49 @@ func uploadDocument(c *gin.Context) {
 		redisCache.MarkProcessed(context.Background(), contentHash, jobID)
 	}
 
+	// --- Output Formats & Options ---
+	outputFormats := c.DefaultPostForm("output_formats", "text")
+	customPrompt := c.DefaultPostForm("prompt", "")
+	includeCoordinates := c.DefaultPostForm("include_coordinates", "false") == "true"
+	includeWordConfidence := c.DefaultPostForm("include_word_confidence", "false") == "true"
+	includeLineConfidence := c.DefaultPostForm("include_line_confidence", "false") == "true"
+	includePageLayout := c.DefaultPostForm("include_page_layout", "false") == "true"
+	language := c.DefaultPostForm("language", "auto")
+	granularity := c.DefaultPostForm("granularity", "block")
+	redactPII := c.DefaultPostForm("redact_pii", "false") == "true"
+	enhance := c.DefaultPostForm("enhance", "true") == "true"
+	deskew := c.DefaultPostForm("deskew", "true") == "true"
+	maxPages := c.DefaultPostForm("max_pages", "0")
+	temperature := c.DefaultPostForm("temperature", "0.0")
+	maxTokens := c.DefaultPostForm("max_tokens", "4096")
+
+	// Validate formats (skip if custom prompt provided)
+	if customPrompt == "" {
+		validFormats := map[string]bool{
+			"text": true, "json": true, "markdown": true,
+			"table": true, "key_value": true, "structured": true,
+		}
+		for _, f := range strings.Split(outputFormats, ",") {
+			f = strings.TrimSpace(f)
+			if f != "" && !validFormats[f] {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":         fmt.Sprintf("Invalid output format: '%s'", f),
+					"valid_formats": []string{"text", "json", "markdown", "table", "key_value", "structured"},
+					"usage":         "Comma-separated, e.g. 'text,table,json'. Or use 'prompt' for custom instructions.",
+				})
+				return
+			}
+		}
+	}
+
 	job := models.Job{
-		ID:          jobID,
-		Filename:    header.Filename,
-		FileSize:    header.Size,
-		ContentType: header.Header.Get("Content-Type"),
-		StoragePath: storagePath,
-		Status:      models.StatusUploaded,
+		ID:            jobID,
+		Filename:      header.Filename,
+		FileSize:      header.Size,
+		ContentType:   header.Header.Get("Content-Type"),
+		StoragePath:   storagePath,
+		Status:        models.StatusUploaded,
+		OutputFormats: outputFormats,
 	}
 	if err := db.Create(&job).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job record"})
@@ -213,11 +229,27 @@ func uploadDocument(c *gin.Context) {
 		TaskQueue: cfg.TemporalTaskQueue,
 	}
 	workflowInput := map[string]interface{}{
-		"job_id":       jobID,
-		"filename":     header.Filename,
-		"storage_path": storagePath,
-		"content_type": header.Header.Get("Content-Type"),
-		"file_ext":     filepath.Ext(header.Filename),
+		"job_id":         jobID,
+		"filename":       header.Filename,
+		"storage_path":   storagePath,
+		"content_type":   header.Header.Get("Content-Type"),
+		"file_ext":       filepath.Ext(header.Filename),
+		"output_formats": outputFormats,
+		"options": map[string]interface{}{
+			"prompt":                  customPrompt,
+			"include_coordinates":     includeCoordinates,
+			"include_word_confidence": includeWordConfidence,
+			"include_line_confidence": includeLineConfidence,
+			"include_page_layout":     includePageLayout,
+			"language":                language,
+			"granularity":             granularity,
+			"redact_pii":              redactPII,
+			"enhance":                 enhance,
+			"deskew":                  deskew,
+			"max_pages":               maxPages,
+			"temperature":             temperature,
+			"max_tokens":              maxTokens,
+		},
 	}
 
 	we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, "DocumentProcessingWorkflow", workflowInput)
@@ -239,10 +271,28 @@ func uploadDocument(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusAccepted, gin.H{
-		"job_id":      jobID,
-		"filename":    header.Filename,
-		"status":      "PROCESSING",
-		"workflow_id": we.GetID(),
+		"job_id":         jobID,
+		"filename":       header.Filename,
+		"status":         "PROCESSING",
+		"workflow_id":    we.GetID(),
+		"output_formats": outputFormats,
+		"options": gin.H{
+			"prompt":                  customPrompt,
+			"include_coordinates":     includeCoordinates,
+			"include_word_confidence": includeWordConfidence,
+			"include_line_confidence": includeLineConfidence,
+			"include_page_layout":     includePageLayout,
+			"language":                language,
+			"granularity":             granularity,
+			"redact_pii":              redactPII,
+			"enhance":                 enhance,
+			"deskew":                  deskew,
+			"max_pages":               maxPages,
+			"temperature":             temperature,
+			"max_tokens":              maxTokens,
+		},
+		"result_url": fmt.Sprintf("/jobs/%s/result", jobID),
+		"status_url": fmt.Sprintf("/jobs/%s", jobID),
 	})
 }
 
@@ -296,28 +346,109 @@ func listJobs(c *gin.Context) {
 
 func getBatchStatus(c *gin.Context) {
 	batchID := c.Param("batch_id")
-	var jobs []models.Job
-	db.Where("batch_id = ?", batchID).Find(&jobs)
+	statusFilter := c.Query("status") // Optional: ?status=COMPLETED or ?status=FAILED
 
-	completed, failed, processing := 0, 0, 0
-	for _, j := range jobs {
+	var jobs []models.Job
+	query := db.Where("batch_id = ?", batchID).Order("created_at asc")
+	if statusFilter != "" {
+		query = query.Where("status = ?", statusFilter)
+	}
+	query.Find(&jobs)
+
+	if len(jobs) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": map[string]interface{}{
+				"message": "Batch not found",
+				"type":    "invalid_request_error",
+				"code":    "batch_not_found",
+			},
+		})
+		return
+	}
+
+	// Count by status (always from full batch, not filtered)
+	var allJobs []models.Job
+	if statusFilter != "" {
+		db.Where("batch_id = ?", batchID).Find(&allJobs)
+	} else {
+		allJobs = jobs
+	}
+
+	completed, failed, processing, uploaded := 0, 0, 0, 0
+	for _, j := range allJobs {
 		switch j.Status {
 		case models.StatusCompleted:
 			completed++
 		case models.StatusFailed:
 			failed++
-		default:
+		case models.StatusProcessing:
 			processing++
+		default:
+			uploaded++
 		}
+	}
+	total := len(allJobs)
+	finished := completed + failed
+	progress := 0.0
+	if total > 0 {
+		progress = float64(finished) / float64(total) * 100
+	}
+
+	// Determine overall batch status
+	batchStatus := "PROCESSING"
+	if finished == total {
+		if failed == 0 {
+			batchStatus = "COMPLETED"
+		} else if completed == 0 {
+			batchStatus = "FAILED"
+		} else {
+			batchStatus = "COMPLETED_WITH_ERRORS"
+		}
+	}
+
+	// Build per-file detail
+	type fileStatus struct {
+		JobID      string  `json:"job_id"`
+		Filename   string  `json:"filename"`
+		Status     string  `json:"status"`
+		Confidence float64 `json:"confidence,omitempty"`
+		PageCount  int     `json:"page_count,omitempty"`
+		Error      string  `json:"error,omitempty"`
+		ResultURL  string  `json:"result_url,omitempty"`
+		CreatedAt  string  `json:"created_at"`
+		UpdatedAt  string  `json:"updated_at"`
+	}
+
+	fileStatuses := make([]fileStatus, len(jobs))
+	for i, j := range jobs {
+		fs := fileStatus{
+			JobID:     j.ID,
+			Filename:  j.Filename,
+			Status:    string(j.Status),
+			CreatedAt: j.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			UpdatedAt: j.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		}
+		if j.Status == models.StatusCompleted {
+			fs.Confidence = j.Confidence
+			fs.PageCount = j.PageCount
+			fs.ResultURL = fmt.Sprintf("/jobs/%s/result", j.ID)
+		}
+		if j.Status == models.StatusFailed {
+			fs.Error = j.ErrorMessage
+		}
+		fileStatuses[i] = fs
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"batch_id":   batchID,
-		"total":      len(jobs),
+		"status":     batchStatus,
+		"progress":   fmt.Sprintf("%.1f%%", progress),
+		"total":      total,
 		"completed":  completed,
 		"failed":     failed,
 		"processing": processing,
-		"jobs":       jobs,
+		"uploaded":   uploaded,
+		"files":      fileStatuses,
 	})
 }
 
