@@ -1,0 +1,57 @@
+# Binaries
+*.exe
+*-bin
+api-gateway
+preprocessing-service
+temporal-worker
+
+# Environment
+.env
+.env.local
+
+# Go
+vendor/
+go.work.sum
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.toast
+.lucid
+.precision
+.prospector
+.pylintrc
+.hypothesis/
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Local Dev
+tmp/
+logs/
+data/
+minio_data/
+postgres_data/
+shared/proto/go/
+shared/proto/python/
