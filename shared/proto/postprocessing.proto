@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package postprocessing;
+
+option go_package = "github.com/user/idep/shared/proto/postprocessing";
+
+service PostProcessingService {
+  rpc PostProcess(PostProcessRequest) returns (PostProcessResponse);
+}
+
+message PostProcessRequest {
+  string raw_content = 1;
+  string job_id = 2;
+  bool redact_pii = 3;
+}
+
+message PostProcessResponse {
+  string structured_content = 1;
+  float confidence_score = 2;
+  string status = 3;
+  string error = 4;
+}

@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package preprocessing;
+
+option go_package = "github.com/user/idep/shared/proto/preprocessing";
+
+service PreprocessingService {
+  rpc Preprocess(PreprocessRequest) returns (PreprocessResponse);
+}
+
+message PreprocessRequest {
+  string file_path = 1;
+  string job_id = 2;
+  bool deskew = 3;
+  bool denoise = 4;
+}
+
+message PreprocessResponse {
+  repeated string image_paths = 1;
+  string status = 2;
+  string error = 3;
+}

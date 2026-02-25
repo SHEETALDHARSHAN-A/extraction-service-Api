@@ -1,0 +1,195 @@
+version: '3.8'
+
+services:
+  # ═══════════════════════════════════════════
+  # Go Microservices
+  # ═══════════════════════════════════════════
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/idep
+      - REDIS_URL=redis://redis:6379/0
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - TEMPORAL_TASK_QUEUE=document-processing-task-queue
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=idep-documents
+      - JWT_SECRET=idep-dev-secret-change-in-production
+      - API_KEYS=dev-key-123:admin,test-key-456:operator
+      - API_PORT=8000
+    depends_on:
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      temporal:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: on-failure
+
+  temporal-worker:
+    build:
+      context: .
+      dockerfile: services/temporal-worker/Dockerfile
+    environment:
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - TEMPORAL_TASK_QUEUE=document-processing-task-queue
+      - TRITON_HOST=triton
+      - TRITON_GRPC_PORT=8001
+      - PREPROCESSING_HOST=preprocessing-service:50051
+      - POSTPROCESSING_HOST=postprocessing-service:50052
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=idep-documents
+    depends_on:
+      - temporal
+      - triton
+      - preprocessing-service
+      - postprocessing-service
+      - minio
+    restart: on-failure
+
+  preprocessing-service:
+    build:
+      context: .
+      dockerfile: services/preprocessing-service/Dockerfile
+    environment:
+      - PORT=50051
+    ports:
+      - "50051:50051"
+    restart: on-failure
+
+  # ═══════════════════════════════════════════
+  # Python Microservices
+  # ═══════════════════════════════════════════
+
+  postprocessing-service:
+    build:
+      context: .
+      dockerfile: services/post-processing-service/Dockerfile
+    environment:
+      - PORT=50052
+    ports:
+      - "50052:50052"
+    restart: on-failure
+
+  # Triton with NVIDIA GPU (RTX 2050)
+  triton:
+    image: nvcr.io/nvidia/tritonserver:24.01-py3
+    ports:
+      - "8001:8001"   # gRPC
+      - "8002:8002"   # Metrics
+    environment:
+      - IDEP_MOCK_INFERENCE=false
+      - GLM_MODEL_PATH=/models/glm_ocr/weights
+    volumes:
+      - ./services/triton-models:/models
+    command: tritonserver --model-repository=/models --allow-gpu-metrics=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: on-failure
+
+  # ═══════════════════════════════════════════
+  # Infrastructure
+  # ═══════════════════════════════════════════
+
+  temporal:
+    image: temporalio/auto-setup:1.22.4
+    ports:
+      - "7233:7233"
+      - "8080:8080"
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PWD=postgres
+      - POSTGRES_SEEDS=db
+    depends_on:
+      - db
+    restart: on-failure
+
+  db:
+    image: postgres:16
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=idep
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+  # ═══════════════════════════════════════════
+  # Observability
+  # ═══════════════════════════════════════════
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=idep-admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
+volumes:
+  postgres_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
