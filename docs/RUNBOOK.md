@@ -222,43 +222,41 @@ curl http://localhost:8002/metrics | findstr "gpu"
 
 ## 5. Testing the API
 
-### 5.1 Authenticate
+### 5.1 Authentication (API Keys)
 
-**Option A: API Key** (simpler for testing)
+We use **OpenAI-style API Keys**. JWT and Role-based access have been removed for simplicity.
 
+| Key Type | Prefix | Example Key |
+|----------|--------|-------------|
+| **Production** | `tp-proj-` | `tp-proj-dev-key-123` |
+| **Test** | `tp-test-` | `tp-test-sandbox-456` |
+
+**Usage**:
+Pass the key in the `Authorization` header as a Bearer token:
 ```powershell
-# All requests below use this header:
-# -H "X-API-Key: dev-key-123"
-```
-
-**Option B: JWT Token**
-
-```powershell
-curl -X POST http://localhost:8000/auth/token ^
-  -H "Content-Type: application/json" ^
-  -d "{\"user_id\": \"sreya\", \"role\": \"admin\"}"
-```
-
-Save the returned `token` value. Use it as:
-```
--H "Authorization: Bearer <YOUR_TOKEN>"
+# -H "Authorization: Bearer tp-proj-dev-key-123"
 ```
 
 ### 5.2 Single Document Upload
 
+Propagate options like `redact_pii`, `deskew`, or `enhance` (default: true).
+
 ```powershell
 curl -X POST http://localhost:8000/jobs/upload ^
-  -H "X-API-Key: dev-key-123" ^
-  -F "document=@C:\path\to\your\document.pdf"
+  -H "Authorization: Bearer tp-proj-dev-key-123" ^
+  -F "document=@C:\path\to\your\document.pdf" ^
+  -F "output_formats=json,structured" ^
+  -F "redact_pii=true" ^
+  -F "include_coordinates=true"
 ```
 
 **Expected** (HTTP 202):
 ```json
 {
   "job_id": "abc-123-...",
-  "filename": "document.pdf",
   "status": "PROCESSING",
-  "workflow_id": "doc-processing-abc-123-..."
+  "result_url": "/jobs/abc-123-.../result",
+  "status_url": "/jobs/abc-123-..."
 }
 ```
 
@@ -266,42 +264,37 @@ curl -X POST http://localhost:8000/jobs/upload ^
 
 ```powershell
 curl http://localhost:8000/jobs/<JOB_ID> ^
-  -H "X-API-Key: dev-key-123"
+  -H "Authorization: Bearer tp-proj-dev-key-123"
 ```
 
-### 5.4 Batch Upload (Multiple Files)
+### 5.4 Batch Upload (Up to 10,000 files)
 
 ```powershell
 curl -X POST http://localhost:8000/jobs/batch ^
-  -H "X-API-Key: dev-key-123" ^
-  -F "documents=@file1.pdf" ^
-  -F "documents=@file2.png" ^
-  -F "documents=@file3.docx"
+  -H "Authorization: Bearer tp-proj-dev-key-123" ^
+  -F "documents=@invoice1.pdf" ^
+  -F "documents=@receipt.png" ^
+  -F "output_formats=text"
 ```
 
-**Expected** (HTTP 202):
-```json
-{
-  "batch_id": "def-456-...",
-  "total": 3,
-  "succeeded": 3,
-  "failed": 0,
-  "jobs": [...]
-}
-```
+### 5.5 Check Batch Progress
 
-### 5.5 Check Batch Status
+The batch status is highly detailed, showing overall percentage and per-file confidence.
 
 ```powershell
 curl http://localhost:8000/jobs/batch/<BATCH_ID> ^
-  -H "X-API-Key: dev-key-123"
+  -H "Authorization: Bearer tp-proj-dev-key-123"
 ```
+
+**Features**:
+- **Filter**: `?status=FAILED` to see only errors.
+- **Progress**: Returns `"progress": "85.5%"` based on completed files.
 
 ### 5.6 Download Result
 
 ```powershell
 curl http://localhost:8000/jobs/<JOB_ID>/result ^
-  -H "X-API-Key: dev-key-123" ^
+  -H "Authorization: Bearer tp-proj-dev-key-123" ^
   -o result.json
 ```
 
@@ -309,14 +302,14 @@ curl http://localhost:8000/jobs/<JOB_ID>/result ^
 
 ```powershell
 curl http://localhost:8000/jobs ^
-  -H "X-API-Key: dev-key-123"
+  -H "Authorization: Bearer tp-proj-dev-key-123"
 ```
 
-### 5.8 Admin Stats (Admin Role Only)
+### 5.8 Admin Stats
 
 ```powershell
 curl http://localhost:8000/admin/stats ^
-  -H "X-API-Key: dev-key-123"
+  -H "Authorization: Bearer tp-proj-dev-key-123"
 ```
 
 ### 5.9 Prometheus Metrics
@@ -448,10 +441,8 @@ docker info | findstr "nvidia"
 
 ### Problem: "unauthorized" on API calls
 ```powershell
-# Make sure you include either:
-# -H "X-API-Key: dev-key-123"
-# or
-# -H "Authorization: Bearer <token>"
+# Make sure you include:
+# -H "Authorization: Bearer tp-proj-dev-key-123"
 ```
 
 ### Problem: Build errors in Go services
@@ -495,7 +486,7 @@ docker-compose -f docker\docker-compose.yml up -d api-gateway
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| API Gateway | http://localhost:8000 | API Key: `dev-key-123` |
+| API Gateway | http://localhost:8000 | Key: `tp-proj-dev-key-123` |
 | Temporal UI | http://localhost:8080 | — |
 | MinIO Console | http://localhost:9001 | `minioadmin` / `minioadmin` |
 | Prometheus | http://localhost:9090 | — |
