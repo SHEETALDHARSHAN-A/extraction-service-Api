@@ -92,14 +92,16 @@ services:
       context: ..
       dockerfile: docker/triton.Dockerfile
     ports:
+      - "18000:8000" # HTTP
       - "8001:8001"   # gRPC
       - "8002:8002"   # Metrics
     environment:
       - IDEP_MOCK_INFERENCE=false
       - GLM_MODEL_PATH=THUDM/glm-4v-9b
-      - HF_HOME=/models/hf-cache
+      - HF_HOME=/opt/hf-cache
     volumes:
       - ../services/triton-models:/models
+      - hf_cache:/opt/hf-cache
     command: tritonserver --model-repository=/models --allow-gpu-metrics=true
     deploy:
       resources:
@@ -200,3 +202,4 @@ volumes:
   prometheus_data:
   grafana_data:
   idep_tmp:
+  hf_cache:
