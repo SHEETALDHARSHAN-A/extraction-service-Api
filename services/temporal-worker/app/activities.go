@@ -8,6 +8,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -148,6 +150,23 @@ func (a *Activities) Preprocess(ctx context.Context, input map[string]interface{
 
 	log.Printf("🔧 [Preprocess] job=%s enhance=%v deskew=%v", jobID, opts.Enhance, opts.Deskew)
 
+	// Fast path for image uploads: download original file from MinIO into shared temp dir.
+	// This bypasses local placeholder protobuf stubs that return simulated paths.
+	ext := strings.ToLower(filepath.Ext(storagePath))
+	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".webp" || ext == ".tif" || ext == ".tiff" {
+		localImagePath, err := a.downloadSourceFromMinIO(ctx, storagePath, jobID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to prepare image from storage: %w", err)
+		}
+
+		return &PreprocessOutput{
+			JobID:      jobID,
+			ImagePaths: []string{localImagePath},
+			PageCount:  1,
+			Options:    opts,
+		}, nil
+	}
+
 	conn, err := grpc.NewClient(a.PreprocessingHost,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
@@ -182,6 +201,43 @@ func (a *Activities) Preprocess(ctx context.Context, input map[string]interface{
 		PageCount:  len(resp.ImagePaths),
 		Options:    opts,
 	}, nil
+}
+
+func (a *Activities) downloadSourceFromMinIO(ctx context.Context, storagePath, jobID string) (string, error) {
+	minioClient, err := minio.New(a.MinioEndpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(a.MinioAccessKey, a.MinioSecretKey, ""),
+		Secure: false,
+	})
+	if err != nil {
+		return "", fmt.Errorf("minio client init failed: %w", err)
+	}
+
+	objectPath := strings.TrimPrefix(storagePath, a.MinioBucket+"/")
+	objectPath = strings.TrimPrefix(objectPath, "/")
+
+	obj, err := minioClient.GetObject(ctx, a.MinioBucket, objectPath, minio.GetObjectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("minio get object failed: %w", err)
+	}
+	defer obj.Close()
+
+	jobDir := filepath.Join("/tmp/idep", jobID)
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir failed: %w", err)
+	}
+
+	localPath := filepath.Join(jobDir, filepath.Base(objectPath))
+	f, err := os.Create(localPath)
+	if err != nil {
+		return "", fmt.Errorf("create local file failed: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, obj); err != nil {
+		return "", fmt.Errorf("copy object to local file failed: %w", err)
+	}
+
+	return localPath, nil
 }
 
 // ─── Activity 2: CallTriton ───
@@ -272,6 +328,9 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 	var totalConfidence float64
 
 	for i, imgPath := range input.ImagePaths {
+		if !filepath.IsAbs(imgPath) {
+			imgPath = filepath.Join("/tmp/idep", imgPath)
+		}
 		pageContent, pageConfidence, err := a.callTritonHTTP(ctx, imgPath, prompt, string(optionsJSON))
 		if err != nil {
 			return nil, fmt.Errorf("triton inference failed for page %d (%s): %w", i+1, imgPath, err)
@@ -302,19 +361,19 @@ func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, opti
 		"inputs": []map[string]interface{}{
 			{
 				"name":     "images",
-				"shape":    []int{1},
+				"shape":    []int{1, 1},
 				"datatype": "BYTES",
 				"data":     []string{imagePath},
 			},
 			{
 				"name":     "prompt",
-				"shape":    []int{1},
+				"shape":    []int{1, 1},
 				"datatype": "BYTES",
 				"data":     []string{prompt},
 			},
 			{
 				"name":     "options",
-				"shape":    []int{1},
+				"shape":    []int{1, 1},
 				"datatype": "BYTES",
 				"data":     []string{options},
 			},

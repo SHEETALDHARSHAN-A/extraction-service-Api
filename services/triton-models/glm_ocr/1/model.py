@@ -139,6 +139,15 @@ def build_prompt(output_formats: str = "text", custom_prompt: str = "",
 class TritonPythonModel:
     """Triton Python Backend for GLM-4V-OCR."""
 
+    @staticmethod
+    def _tensor_first_value(tensor):
+        arr = tensor.as_numpy()
+        while isinstance(arr, np.ndarray):
+            if arr.size == 0:
+                raise ValueError("Empty tensor input")
+            arr = arr.flat[0]
+        return arr
+
     def initialize(self, args):
         global MOCK_MODE
         self.model_config = json.loads(args.get("model_config", "{}"))
@@ -180,10 +189,18 @@ class TritonPythonModel:
                     images_tensor = pb_utils.get_input_tensor_by_name(request, "images")
                     pt = pb_utils.get_input_tensor_by_name(request, "prompt")
                     if pt is not None:
-                        prompt = pt.as_numpy()[0].decode("utf-8")
+                        prompt_val = self._tensor_first_value(pt)
+                        if isinstance(prompt_val, bytes):
+                            prompt = prompt_val.decode("utf-8")
+                        else:
+                            prompt = str(prompt_val)
                     ot = pb_utils.get_input_tensor_by_name(request, "options")
                     if ot is not None:
-                        options = json.loads(ot.as_numpy()[0].decode("utf-8"))
+                        options_val = self._tensor_first_value(ot)
+                        if isinstance(options_val, bytes):
+                            options = json.loads(options_val.decode("utf-8"))
+                        else:
+                            options = json.loads(str(options_val))
 
                 if MOCK_MODE:
                     result = self._mock_inference(prompt, options)
@@ -210,7 +227,7 @@ class TritonPythonModel:
 
     def _real_inference(self, images_tensor, prompt, options):
         """GPU inference with GLM-4V."""
-        image_ref = images_tensor.as_numpy()[0]
+        image_ref = self._tensor_first_value(images_tensor)
         if isinstance(image_ref, bytes):
             image_ref = image_ref.decode("utf-8")
 

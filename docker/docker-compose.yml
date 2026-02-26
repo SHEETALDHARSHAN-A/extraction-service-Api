@@ -103,6 +103,7 @@ services:
     volumes:
       - ../services/triton-models:/models
       - hf_cache:/opt/hf-cache
+      - idep_tmp:/tmp/idep
     command: tritonserver --model-repository=/models --allow-gpu-metrics=true
     deploy:
       resources:
