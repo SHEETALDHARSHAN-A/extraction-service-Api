@@ -245,8 +245,16 @@ class TritonPythonModel:
             return_tensors="pt", return_dict=True,
         ).to(self.model.device)
 
+        max_new_tokens = 512
+        if isinstance(options, dict) and options.get("max_tokens") is not None:
+            try:
+                max_new_tokens = int(str(options.get("max_tokens")))
+            except (TypeError, ValueError):
+                max_new_tokens = 512
+        max_new_tokens = max(64, min(max_new_tokens, 1024))
+
         with torch.no_grad():
-            outputs = self.model.generate(**inputs, max_new_tokens=4096, do_sample=False)
+            outputs = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
 
         generated_ids = outputs[:, inputs["input_ids"].shape[1]:]
         text = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
