@@ -150,18 +150,20 @@ func (a *Activities) Preprocess(ctx context.Context, input map[string]interface{
 
 	log.Printf("🔧 [Preprocess] job=%s enhance=%v deskew=%v", jobID, opts.Enhance, opts.Deskew)
 
+	// Stage source document from MinIO to shared temp volume so downstream
+	// preprocessing tools always receive a local filesystem path.
+	localSourcePath, err := a.downloadSourceFromMinIO(ctx, storagePath, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare source from storage: %w", err)
+	}
+
 	// Fast path for image uploads: download original file from MinIO into shared temp dir.
 	// This bypasses local placeholder protobuf stubs that return simulated paths.
-	ext := strings.ToLower(filepath.Ext(storagePath))
+	ext := strings.ToLower(filepath.Ext(localSourcePath))
 	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".webp" || ext == ".tif" || ext == ".tiff" {
-		localImagePath, err := a.downloadSourceFromMinIO(ctx, storagePath, jobID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to prepare image from storage: %w", err)
-		}
-
 		return &PreprocessOutput{
 			JobID:      jobID,
-			ImagePaths: []string{localImagePath},
+			ImagePaths: []string{localSourcePath},
 			PageCount:  1,
 			Options:    opts,
 		}, nil
@@ -180,7 +182,7 @@ func (a *Activities) Preprocess(ctx context.Context, input map[string]interface{
 	defer cancel()
 
 	resp, err := client.Preprocess(ctx, &preprocessing.PreprocessRequest{
-		FilePath: storagePath,
+		FilePath: localSourcePath,
 		JobId:    jobID,
 		Deskew:   opts.Deskew,
 		Denoise:  opts.Enhance,

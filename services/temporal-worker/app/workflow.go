@@ -29,10 +29,10 @@ func DocumentProcessingWorkflow(ctx workflow.Context, input map[string]interface
 	extractionOpts := workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    2 * time.Second,
+			InitialInterval:    5 * time.Second,
 			BackoffCoefficient: 2.0,
-			MaximumInterval:    10 * time.Minute,
-			MaximumAttempts:    5,
+			MaximumInterval:    2 * time.Minute,
+			MaximumAttempts:    10,
 		},
 	}
 	postprocessOpts := workflow.ActivityOptions{

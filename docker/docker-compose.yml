@@ -53,11 +53,16 @@ services:
     volumes:
       - idep_tmp:/tmp/idep
     depends_on:
-      - temporal
-      - triton
-      - preprocessing-service
-      - postprocessing-service
-      - minio
+      temporal:
+        condition: service_started
+      triton:
+        condition: service_healthy
+      preprocessing-service:
+        condition: service_started
+      postprocessing-service:
+        condition: service_started
+      minio:
+        condition: service_started
     restart: on-failure
 
   preprocessing-service:
@@ -105,6 +110,12 @@ services:
       - hf_cache:/opt/hf-cache
       - idep_tmp:/tmp/idep
     command: tritonserver --model-repository=/models --allow-gpu-metrics=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
     deploy:
       resources:
         reservations:

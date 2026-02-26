@@ -90,6 +90,13 @@ func (c *RedisCache) MarkProcessed(ctx context.Context, contentHash, jobID strin
 	}
 }
 
+// Evict removes the dedup cache entry for the given content hash,
+// allowing the document to be re-submitted for processing.
+func (c *RedisCache) Evict(ctx context.Context, contentHash string) {
+	key := c.prefix + "dedup:" + contentHash
+	c.client.Del(ctx, key)
+}
+
 // ─── Result Cache ───
 
 // GetResult retrieves a cached extraction result

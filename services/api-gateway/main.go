@@ -142,15 +142,25 @@ func uploadDocument(c *gin.Context) {
 		if existingJobID, found := redisCache.CheckDuplicate(context.Background(), contentHash); found {
 			var existingJob models.Job
 			if db.First(&existingJob, "id = ?", existingJobID).Error == nil {
-				log.Printf("♻️ Cache hit: %s → existing job %s", header.Filename, existingJobID)
-				c.JSON(http.StatusOK, gin.H{
-					"job_id":   existingJobID,
-					"filename": header.Filename,
-					"status":   existingJob.Status,
-					"cached":   true,
-					"message":  "Identical document already processed",
-				})
-				return
+				// Only return cached result for COMPLETED or PROCESSING jobs.
+				// If the previous job FAILED, evict the cache entry and allow
+				// the document to be re-submitted for processing.
+				if existingJob.Status == models.StatusFailed {
+					log.Printf("♻️ Cache hit for FAILED job %s – evicting, will reprocess %s",
+						existingJobID, header.Filename)
+					redisCache.Evict(context.Background(), contentHash)
+				} else {
+					log.Printf("♻️ Cache hit: %s → existing job %s (status=%s)",
+						header.Filename, existingJobID, existingJob.Status)
+					c.JSON(http.StatusOK, gin.H{
+						"job_id":   existingJobID,
+						"filename": header.Filename,
+						"status":   existingJob.Status,
+						"cached":   true,
+						"message":  "Identical document already processed",
+					})
+					return
+				}
 			}
 		}
 	}
