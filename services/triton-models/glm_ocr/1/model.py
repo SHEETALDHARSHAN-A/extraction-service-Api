@@ -22,6 +22,7 @@ import random
 logger = logging.getLogger(__name__)
 
 MOCK_MODE = os.getenv("IDEP_MOCK_INFERENCE", "true").lower() == "true"
+STRICT_REAL_MODE = os.getenv("IDEP_STRICT_REAL", "true").lower() == "true"
 
 if not MOCK_MODE:
     try:
@@ -30,6 +31,8 @@ if not MOCK_MODE:
         from PIL import Image
         import io as _io
     except ImportError as e:
+        if STRICT_REAL_MODE:
+            raise RuntimeError(f"ML dependencies not available in strict real mode: {e}")
         logger.warning(f"ML dependencies not available: {e}. Falling back to mock mode.")
         MOCK_MODE = True
 
@@ -139,7 +142,10 @@ class TritonPythonModel:
     def initialize(self, args):
         global MOCK_MODE
         self.model_config = json.loads(args.get("model_config", "{}"))
-        logger.info(f"Initializing GLM-OCR (mock={MOCK_MODE})")
+        logger.info(f"Initializing GLM-OCR (mock={MOCK_MODE}, strict_real={STRICT_REAL_MODE})")
+
+        if MOCK_MODE and STRICT_REAL_MODE:
+            raise RuntimeError("Strict real mode is enabled but mock mode is active")
 
         if not MOCK_MODE:
             try:
@@ -150,6 +156,8 @@ class TritonPythonModel:
                 self.model.eval()
                 logger.info("✅ GLM-OCR model loaded on GPU")
             except Exception as e:
+                if STRICT_REAL_MODE:
+                    raise RuntimeError(f"Failed to initialize real GLM model in strict mode: {e}")
                 logger.warning(f"Failed to initialize real GLM model: {e}. Falling back to mock mode.")
                 MOCK_MODE = True
                 self.tokenizer = None
@@ -229,6 +237,7 @@ class TritonPythonModel:
         result = {
             "content": text,
             "model": "glm-4v-9b",
+            "mode": "real",
             "confidence": 0.92,
             "usage": {"prompt_tokens": inputs["input_ids"].shape[1], "completion_tokens": len(generated_ids[0])},
         }
@@ -263,6 +272,7 @@ class TritonPythonModel:
         result = {
             "content": content if isinstance(content, str) else json.dumps(content, indent=2),
             "model": "glm-4v-9b",
+            "mode": "mock",
             "confidence": round(random.uniform(0.88, 0.96), 2),
             "usage": {"prompt_tokens": len(prompt.split()), "completion_tokens": 256},
         }

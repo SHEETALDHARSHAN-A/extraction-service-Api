@@ -97,6 +97,7 @@ services:
       - "8002:8002"   # Metrics
     environment:
       - IDEP_MOCK_INFERENCE=false
+      - IDEP_STRICT_REAL=true
       - GLM_MODEL_PATH=THUDM/glm-4v-9b
       - HF_HOME=/opt/hf-cache
     volumes:
