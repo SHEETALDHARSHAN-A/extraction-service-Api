@@ -8,6 +8,7 @@ type WorkerConfig struct {
 	TaskQueue          string
 	TritonHost         string
 	TritonGRPCPort     string
+	TritonHTTPPort     string
 	PreprocessingHost  string
 	PostprocessingHost string
 	MinioEndpoint      string
@@ -23,6 +24,7 @@ func Load() *WorkerConfig {
 		TaskQueue:          getEnv("TEMPORAL_TASK_QUEUE", "document-processing-task-queue"),
 		TritonHost:         getEnv("TRITON_HOST", "localhost"),
 		TritonGRPCPort:     getEnv("TRITON_GRPC_PORT", "8001"),
+		TritonHTTPPort:     getEnv("TRITON_HTTP_PORT", "8000"),
 		PreprocessingHost:  getEnv("PREPROCESSING_HOST", "localhost:50051"),
 		PostprocessingHost: getEnv("POSTPROCESSING_HOST", "localhost:50052"),
 		MinioEndpoint:      getEnv("MINIO_ENDPOINT", "localhost:9000"),

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ═══════════════════════════════════════════
   # Go Microservices
@@ -7,7 +5,7 @@ services:
 
   api-gateway:
     build:
-      context: .
+      context: ..
       dockerfile: services/api-gateway/Dockerfile
     ports:
       - "8000:8000"
@@ -37,7 +35,7 @@ services:
 
   temporal-worker:
     build:
-      context: .
+      context: ..
       dockerfile: services/temporal-worker/Dockerfile
     environment:
       - TEMPORAL_HOST=temporal:7233
@@ -45,12 +43,15 @@ services:
       - TEMPORAL_TASK_QUEUE=document-processing-task-queue
       - TRITON_HOST=triton
       - TRITON_GRPC_PORT=8001
+      - TRITON_HTTP_PORT=8000
       - PREPROCESSING_HOST=preprocessing-service:50051
       - POSTPROCESSING_HOST=postprocessing-service:50052
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin
       - MINIO_BUCKET=idep-documents
+    volumes:
+      - idep_tmp:/tmp/idep
     depends_on:
       - temporal
       - triton
@@ -61,12 +62,14 @@ services:
 
   preprocessing-service:
     build:
-      context: .
+      context: ..
       dockerfile: services/preprocessing-service/Dockerfile
     environment:
       - PORT=50051
     ports:
       - "50051:50051"
+    volumes:
+      - idep_tmp:/tmp/idep
     restart: on-failure
 
   # ═══════════════════════════════════════════
@@ -75,7 +78,7 @@ services:
 
   postprocessing-service:
     build:
-      context: .
+      context: ..
       dockerfile: services/post-processing-service/Dockerfile
     environment:
       - PORT=50052
@@ -85,15 +88,18 @@ services:
 
   # Triton with NVIDIA GPU (RTX 2050)
   triton:
-    image: nvcr.io/nvidia/tritonserver:24.01-py3
+    build:
+      context: ..
+      dockerfile: docker/triton.Dockerfile
     ports:
       - "8001:8001"   # gRPC
       - "8002:8002"   # Metrics
     environment:
       - IDEP_MOCK_INFERENCE=false
-      - GLM_MODEL_PATH=/models/glm_ocr/weights
+      - GLM_MODEL_PATH=THUDM/glm-4v-9b
+      - HF_HOME=/models/hf-cache
     volumes:
-      - ./services/triton-models:/models
+      - ../services/triton-models:/models
     command: tritonserver --model-repository=/models --allow-gpu-metrics=true
     deploy:
       resources:
@@ -160,7 +166,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -193,3 +199,4 @@ volumes:
   minio_data:
   prometheus_data:
   grafana_data:
+  idep_tmp:

@@ -1,13 +1,13 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25.6-alpine AS builder
 
 WORKDIR /app
 RUN apk add --no-cache git
 
 WORKDIR /app/services/preprocessing-service
-COPY services/preprocessing-service/go.mod ./
+COPY services/preprocessing-service/go.mod services/preprocessing-service/go.sum* ./
+COPY shared /app/shared
 RUN go mod download
 COPY services/preprocessing-service/*.go ./
-COPY shared /app/shared
 RUN go build -o main .
 
 # --- Final Image ---
@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-eng \
     imagemagick \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     unrar-free \
     p7zip-full \

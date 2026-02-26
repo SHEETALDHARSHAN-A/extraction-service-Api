@@ -43,8 +43,10 @@
 ### Verify GPU access from Docker
 
 ```powershell
-docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.2.2-base-ubuntu22.04 nvidia-smi
 ```
+
+Use a full tag (for example `12.2.2-base-ubuntu22.04`); generic tags like `latest` or `12.0-base` are not published for this repo.
 
 You should see your **RTX 2050** listed with driver version and CUDA version.
 

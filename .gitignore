@@ -55,3 +55,12 @@ minio_data/
 postgres_data/
 shared/proto/go/
 shared/proto/python/
+
+# Triton / HF cache (runtime artifacts)
+services/triton-models/hf-cache/
+
+# Local test outputs
+result-*.json
+result-*.txt
+result-*.bin
+tmp-*.txt

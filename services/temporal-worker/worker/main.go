@@ -35,6 +35,7 @@ func main() {
 		PostprocessingHost: cfg.PostprocessingHost,
 		TritonHost:         cfg.TritonHost,
 		TritonGRPCPort:     cfg.TritonGRPCPort,
+		TritonHTTPPort:     cfg.TritonHTTPPort,
 		MinioEndpoint:      cfg.MinioEndpoint,
 		MinioAccessKey:     cfg.MinioAccessKey,
 		MinioSecretKey:     cfg.MinioSecretKey,

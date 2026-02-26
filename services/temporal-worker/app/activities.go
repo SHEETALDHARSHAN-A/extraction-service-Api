@@ -1,13 +1,18 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/user/idep/shared/proto/postprocessing"
 	"github.com/user/idep/shared/proto/preprocessing"
 	"google.golang.org/grpc"
@@ -20,6 +25,7 @@ type Activities struct {
 	PostprocessingHost string
 	TritonHost         string
 	TritonGRPCPort     string
+	TritonHTTPPort     string
 	MinioEndpoint      string
 	MinioAccessKey     string
 	MinioSecretKey     string
@@ -244,16 +250,6 @@ func buildPrompt(opts ExtractionOptions) string {
 func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*ExtractionOutput, error) {
 	log.Printf("🧠 [Triton] job=%s pages=%d formats=%s", input.JobID, input.PageCount, input.Options.OutputFormats)
 
-	tritonAddr := fmt.Sprintf("%s:%s", a.TritonHost, a.TritonGRPCPort)
-
-	conn, err := grpc.NewClient(tritonAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Triton: %w", err)
-	}
-	defer conn.Close()
-
 	// Build the prompt from user options
 	prompt := buildPrompt(input.Options)
 
@@ -272,25 +268,19 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 	log.Printf("   Prompt: %.80s...", prompt)
 	log.Printf("   Options: %s", string(optionsJSON))
 
-	// ─── Triton gRPC Inference ───
-	// In production, this sends image tensors + prompt + options to Triton's Python backend.
-	// The model.py (TritonPythonModel) receives these as input tensors:
-	//   - "images": preprocessed page image as numpy array
-	//   - "prompt": the constructed prompt string
-	//   - "options": JSON string of extraction options
-	//
-	// For now, we generate format-aware mock results that match what GLM-OCR would return.
-
 	var allContent string
 	var totalConfidence float64
 
 	for i, imgPath := range input.ImagePaths {
-		pageContent := generateMockResult(input.Options, i+1, imgPath)
+		pageContent, pageConfidence, err := a.callTritonHTTP(ctx, imgPath, prompt, string(optionsJSON))
+		if err != nil {
+			return nil, fmt.Errorf("triton inference failed for page %d (%s): %w", i+1, imgPath, err)
+		}
 		if i > 0 {
 			allContent += "\n---PAGE_BREAK---\n"
 		}
 		allContent += pageContent
-		totalConfidence += 0.93
+		totalConfidence += pageConfidence
 	}
 
 	avgConfidence := totalConfidence / float64(len(input.ImagePaths))
@@ -303,6 +293,90 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 		PageCount:  input.PageCount,
 		Options:    input.Options,
 	}, nil
+}
+
+func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, options string) (string, float64, error) {
+	tritonURL := fmt.Sprintf("http://%s:%s/v2/models/glm_ocr/infer", a.TritonHost, a.TritonHTTPPort)
+
+	payload := map[string]interface{}{
+		"inputs": []map[string]interface{}{
+			{
+				"name":     "images",
+				"shape":    []int{1},
+				"datatype": "BYTES",
+				"data":     []string{imagePath},
+			},
+			{
+				"name":     "prompt",
+				"shape":    []int{1},
+				"datatype": "BYTES",
+				"data":     []string{prompt},
+			},
+			{
+				"name":     "options",
+				"shape":    []int{1},
+				"datatype": "BYTES",
+				"data":     []string{options},
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", 0, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tritonURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: 2 * time.Minute}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return "", 0, fmt.Errorf("triton http %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var inferResp struct {
+		Outputs []struct {
+			Name string          `json:"name"`
+			Data json.RawMessage `json:"data"`
+		} `json:"outputs"`
+	}
+	if err := json.Unmarshal(respBody, &inferResp); err != nil {
+		return "", 0, err
+	}
+
+	generatedText := ""
+	confidence := 0.0
+
+	for _, out := range inferResp.Outputs {
+		switch out.Name {
+		case "generated_text":
+			var arr []string
+			if err := json.Unmarshal(out.Data, &arr); err == nil && len(arr) > 0 {
+				generatedText = arr[0]
+			}
+		case "confidence":
+			var arr []float64
+			if err := json.Unmarshal(out.Data, &arr); err == nil && len(arr) > 0 {
+				confidence = arr[0]
+			}
+		}
+	}
+
+	if generatedText == "" {
+		return "", 0, fmt.Errorf("missing generated_text in Triton response")
+	}
+
+	return generatedText, confidence, nil
 }
 
 // generateMockResult returns format-specific mock output
@@ -498,7 +572,10 @@ func (a *Activities) PostProcess(ctx context.Context, input *ExtractionOutput) (
 	}
 
 	resultJSON, _ := json.MarshalIndent(envelope, "", "  ")
-	_ = resultJSON // Would upload to MinIO in production
+
+	if err := a.uploadResultToMinIO(ctx, resultPath, resultJSON); err != nil {
+		return nil, fmt.Errorf("failed to upload result to MinIO: %w", err)
+	}
 
 	log.Printf("✅ [PostProcess] job=%s result=%d bytes", input.JobID, len(resultJSON))
 
@@ -509,4 +586,33 @@ func (a *Activities) PostProcess(ctx context.Context, input *ExtractionOutput) (
 		ResultPath:        resultPath,
 		PageCount:         input.PageCount,
 	}, nil
+}
+
+func (a *Activities) uploadResultToMinIO(ctx context.Context, objectPath string, content []byte) error {
+	endpoint := strings.TrimPrefix(strings.TrimPrefix(a.MinioEndpoint, "http://"), "https://")
+	useSSL := strings.HasPrefix(a.MinioEndpoint, "https://")
+
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(a.MinioAccessKey, a.MinioSecretKey, ""),
+		Secure: useSSL,
+	})
+	if err != nil {
+		return err
+	}
+
+	exists, err := client.BucketExists(ctx, a.MinioBucket)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if err := client.MakeBucket(ctx, a.MinioBucket, minio.MakeBucketOptions{}); err != nil {
+			return err
+		}
+	}
+
+	reader := bytes.NewReader(content)
+	_, err = client.PutObject(ctx, a.MinioBucket, objectPath, reader, int64(len(content)), minio.PutObjectOptions{
+		ContentType: "application/json",
+	})
+	return err
 }

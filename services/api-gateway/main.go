@@ -19,6 +19,7 @@ import (
 	"github.com/user/idep/api-gateway/middleware"
 	"github.com/user/idep/api-gateway/models"
 	"github.com/user/idep/api-gateway/storage"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -303,6 +304,7 @@ func getJobStatus(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
 		return
 	}
+	syncJobWithWorkflowStatus(c.Request.Context(), &job)
 	c.JSON(http.StatusOK, job)
 }
 
@@ -313,6 +315,7 @@ func getJobResult(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
 		return
 	}
+	syncJobWithWorkflowStatus(c.Request.Context(), &job)
 	if job.Status != models.StatusCompleted {
 		c.JSON(http.StatusConflict, gin.H{"error": "Job not yet completed", "status": job.Status})
 		return
@@ -332,6 +335,66 @@ func getJobResult(c *gin.Context) {
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s_result.json"`, job.Filename))
 	c.Header("Content-Type", "application/json")
 	c.DataFromReader(http.StatusOK, -1, "application/json", reader, nil)
+}
+
+func syncJobWithWorkflowStatus(ctx context.Context, job *models.Job) {
+	if temporalClient == nil || job.WorkflowID == "" {
+		return
+	}
+
+	desc, err := temporalClient.DescribeWorkflowExecution(ctx, job.WorkflowID, job.RunID)
+	if err != nil || desc == nil || desc.WorkflowExecutionInfo == nil {
+		return
+	}
+
+	status := desc.WorkflowExecutionInfo.GetStatus()
+	if status == enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED {
+		if job.Status == models.StatusCompleted && job.ResultPath != "" {
+			return
+		}
+
+		wfRun := temporalClient.GetWorkflow(ctx, job.WorkflowID, job.RunID)
+		var workflowResult map[string]interface{}
+		if err := wfRun.Get(ctx, &workflowResult); err != nil {
+			return
+		}
+
+		updates := map[string]interface{}{
+			"status": models.StatusCompleted,
+		}
+
+		if resultPath, ok := workflowResult["result_path"].(string); ok {
+			updates["result_path"] = resultPath
+			job.ResultPath = resultPath
+		}
+		if confidence, ok := workflowResult["confidence"].(float64); ok {
+			updates["confidence"] = confidence
+			job.Confidence = confidence
+		}
+		if pageCount, ok := workflowResult["page_count"].(float64); ok {
+			updates["page_count"] = int(pageCount)
+			job.PageCount = int(pageCount)
+		}
+
+		db.Model(job).Updates(updates)
+		job.Status = models.StatusCompleted
+		job.ErrorMessage = ""
+		return
+	}
+
+	if status == enumspb.WORKFLOW_EXECUTION_STATUS_FAILED ||
+		status == enumspb.WORKFLOW_EXECUTION_STATUS_CANCELED ||
+		status == enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED ||
+		status == enumspb.WORKFLOW_EXECUTION_STATUS_TIMED_OUT {
+		if job.Status != models.StatusFailed {
+			db.Model(job).Updates(map[string]interface{}{
+				"status":        models.StatusFailed,
+				"error_message": fmt.Sprintf("Workflow ended with status: %s", status.String()),
+			})
+			job.Status = models.StatusFailed
+			job.ErrorMessage = fmt.Sprintf("Workflow ended with status: %s", status.String())
+		}
+	}
 }
 
 func listJobs(c *gin.Context) {

@@ -137,16 +137,23 @@ class TritonPythonModel:
     """Triton Python Backend for GLM-4V-OCR."""
 
     def initialize(self, args):
+        global MOCK_MODE
         self.model_config = json.loads(args.get("model_config", "{}"))
         logger.info(f"Initializing GLM-OCR (mock={MOCK_MODE})")
 
         if not MOCK_MODE:
-            model_path = os.getenv("GLM_MODEL_PATH", "THUDM/glm-4v-9b")
-            self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_path, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
-            self.model.eval()
-            logger.info("✅ GLM-OCR model loaded on GPU")
+            try:
+                model_path = os.getenv("GLM_MODEL_PATH", "THUDM/glm-4v-9b")
+                self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_path, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
+                self.model.eval()
+                logger.info("✅ GLM-OCR model loaded on GPU")
+            except Exception as e:
+                logger.warning(f"Failed to initialize real GLM model: {e}. Falling back to mock mode.")
+                MOCK_MODE = True
+                self.tokenizer = None
+                self.model = None
         else:
             self.tokenizer = None
             self.model = None
@@ -195,8 +202,17 @@ class TritonPythonModel:
 
     def _real_inference(self, images_tensor, prompt, options):
         """GPU inference with GLM-4V."""
-        image_data = images_tensor.as_numpy()
-        img = Image.fromarray(image_data)
+        image_ref = images_tensor.as_numpy()[0]
+        if isinstance(image_ref, bytes):
+            image_ref = image_ref.decode("utf-8")
+
+        if isinstance(image_ref, str):
+            if not os.path.exists(image_ref):
+                raise FileNotFoundError(f"Image path not found: {image_ref}")
+            img = Image.open(image_ref).convert("RGB")
+        else:
+            image_data = images_tensor.as_numpy()
+            img = Image.fromarray(image_data)
 
         inputs = self.tokenizer.apply_chat_template(
             [{"role": "user", "image": img, "content": prompt}],

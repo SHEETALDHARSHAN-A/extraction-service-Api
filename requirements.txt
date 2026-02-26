@@ -12,8 +12,8 @@ httpx==0.26.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-dotenv==1.0.1
-open-telemetry-sdk==0.43b0
-open-telemetry-exporter-otlp==0.43b0
+opentelemetry-sdk==1.22.0
+opentelemetry-exporter-otlp==1.22.0
 prometheus-client==0.19.0
 tritonclient[all]==2.41.1
 numpy==1.26.4
