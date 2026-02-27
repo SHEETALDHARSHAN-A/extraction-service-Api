@@ -158,7 +158,7 @@ class TritonPythonModel:
 
         if not MOCK_MODE:
             try:
-                model_path = os.getenv("GLM_MODEL_PATH", "THUDM/glm-ocr")
+                model_path = os.getenv("GLM_MODEL_PATH", "unsloth/GLM-OCR")
                 self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
                 self.model = AutoModelForCausalLM.from_pretrained(
                     model_path, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
