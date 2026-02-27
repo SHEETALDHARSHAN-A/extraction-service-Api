@@ -1,0 +1,60 @@
+| python  | /opt/tritonserver/backends/python/libtriton_python.so | {"cmdline":{"auto-complete-config":"true","backend-directory":"/opt/tritonserver/backends","min-compute-capability":"6.000000","default-max-batch-size":"4"}} |
++---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+I0227 19:20:23.498327 1 server.cc:676] 
++---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+| Model   | Version | Status                                                                                                                         |
++---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+| glm_ocr | 1       | UNAVAILABLE: Internal: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys' |
+|         |         |                                                                                                                                |
+|         |         | At:                                                                                                                            |
+|         |         |   /models/glm_ocr/1/model.py(174): initialize                                                                                  |
++---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+
+I0227 19:20:23.558019 1 metrics.cc:877] Collecting metrics for GPU 0: NVIDIA GeForce RTX 2050
+I0227 19:20:23.563585 1 metrics.cc:770] Collecting CPU metrics
+I0227 19:20:23.563805 1 tritonserver.cc:2498] 
++----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Option                           | Value                                                                                                                                                                                                           |
++----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| server_id                        | triton                                                                                                                                                                                                          |
+| server_version                   | 2.42.0                                                                                                                                                                                                          |
+| server_extensions                | classification sequence model_repository model_repository(unload_dependents) schedule_policy model_configuration system_shared_memory cuda_shared_memory binary_tensor_data parameters statistics trace logging |
+| model_repository_path[0]         | /models                                                                                                                                                                                                         |
+| model_control_mode               | MODE_NONE                                                                                                                                                                                                       |
+| strict_model_config              | 0                                                                                                                                                                                                               |
+| rate_limit                       | OFF                                                                                                                                                                                                             |
+| pinned_memory_pool_byte_size     | 268435456                                                                                                                                                                                                       |
+| cuda_memory_pool_byte_size{0}    | 67108864                                                                                                                                                                                                        |
+| min_supported_compute_capability | 6.0                                                                                                                                                                                                             |
+| strict_readiness                 | 1                                                                                                                                                                                                               |
+| exit_timeout                     | 30                                                                                                                                                                                                              |
+| cache_enabled                    | 0                                                                                                                                                                                                               |
++----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+I0227 19:20:23.563824 1 server.cc:307] Waiting for in-flight requests to complete.
+I0227 19:20:23.563829 1 server.cc:323] Timeout 30: Found 0 model versions that have in-flight inferences
+I0227 19:20:23.563833 1 server.cc:338] All models are stopped, unloading models
+I0227 19:20:23.563835 1 server.cc:345] Timeout 30: Found 0 live models and 0 in-flight non-inference requests
+error: creating server: Internal - failed to load all models
+W0227 19:20:24.573445 1 metrics.cc:631] Unable to get power limit for GPU 0. Status:Success, value:0.000000
+
+=============================
+== Triton Inference Server ==
+=============================
+
+NVIDIA Release 24.01 (build 80100513)
+Triton Server Version 2.42.0
+
+Copyright (c) 2018-2023, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+
+Various files include modifications (c) NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+I0227 19:20:28.817066 1 pinned_memory_manager.cc:275] Pinned memory pool is created at '0x204c00000' with size 268435456
+I0227 19:20:28.817162 1 cuda_memory_manager.cc:107] CUDA memory pool is created on device 0 with size 67108864
+I0227 19:20:29.154712 1 model_lifecycle.cc:461] loading: glm_ocr:1
+I0227 19:20:39.020198 1 python_be.cc:2362] TRITONBACKEND_ModelInstanceInitialize: glm_ocr_0_0 (GPU device 0)

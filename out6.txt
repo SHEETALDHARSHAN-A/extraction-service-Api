@@ -1,0 +1,4 @@
+Disabling PyTorch because PyTorch >= 2.4 is required but found 2.2.0+cu121
+PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+Fetching 5 files:   0%|          | 0/5 [00:00<?, ?it/s]Fetching 5 files:  20%|██        | 1/5 [00:00<00:01,  2.28it/s]Fetching 5 files:  40%|████      | 2/5 [00:00<00:01,  2.30it/s]Fetching 5 files:  80%|████████  | 4/5 [00:01<00:00,  2.55it/s]Fetching 5 files: 100%|██████████| 5/5 [00:01<00:00,  3.12it/s]
+PreTrainedTokenizerFast Success: <class 'transformers.tokenization_utils_tokenizers.TokenizersBackend'>

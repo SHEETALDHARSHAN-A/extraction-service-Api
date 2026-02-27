@@ -1,5 +1,5 @@
 # 🚀 IDEP GPU Testing - Quick Start Guide
-
+ instead of rebuilding the entire Docker image (which took 90 minutes), let me install protobuf directly in the running container 
 Complete end-to-end testing with GPU support for your NVIDIA RTX 2050.
 
 ---
