@@ -167,11 +167,11 @@ class TritonPythonModel:
                 try:
                     local_dir = snapshot_download(
                         repo_id=model_path,
-                        allow_patterns=["tokenizer_config.json", "*.model", "special_tokens_map.json", "config.json", "generation_config.json"],
+                        allow_patterns=["tokenizer*", "*.json", "*.model", "*.py"],
                         local_dir="/tmp/local_glm",
                     )
                     
-                    # Remove tokenizer.json if it exists (it causes ModelWrapper parse errors)
+                    # Remove tokenizer.json if it exists (it causes ModelWrapper parse errors in Rust)
                     tokenizer_json_path = os.path.join(local_dir, "tokenizer.json")
                     if os.path.exists(tokenizer_json_path):
                         os.remove(tokenizer_json_path)
