@@ -1,0 +1,14 @@
+Fetching 5 files:   0%|          | 0/5 [00:00<?, ?it/s]Fetching 5 files:  20%|██        | 1/5 [00:02<00:11,  2.80s/it]Fetching 5 files:  80%|████████  | 4/5 [00:03<00:00,  1.58it/s]Fetching 5 files: 100%|██████████| 5/5 [00:03<00:00,  1.57it/s]
+Traceback (most recent call last):
+  File "/workspace/test_tokenizer.py", line 29, in <module>
+    import tokenization_chatglm
+ModuleNotFoundError: No module named 'tokenization_chatglm'
+Traceback (most recent call last):
+  File "/workspace/test_tokenizer.py", line 36, in <module>
+    tokenizer = AutoTokenizer.from_pretrained(local_dir, trust_remote_code=True, use_fast=False)
+  File "/usr/local/lib/python3.10/dist-packages/transformers/models/auto/tokenization_auto.py", line 894, in from_pretrained
+    raise ValueError(
+ValueError: Tokenizer class ChatGLMTokenizer does not exist or is not currently imported.
+Patched tokenizer_config.json tokenizer_class -> ChatGLMTokenizer
+Native import of tokenization_chatglm failed:
+Failed local_dir:
