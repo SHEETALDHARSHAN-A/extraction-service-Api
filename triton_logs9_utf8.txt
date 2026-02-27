@@ -1,0 +1,80 @@
+﻿triton-1  | E0227 14:26:25.660981 1 backend_model.cc:691] ERROR: Failed to create instance: RuntimeError: Failed to initialize real GLM model in strict mode: Tokenizer class ChatGLMTokenizer does not exist or is not currently imported.
+triton-1  | 
+triton-1  | At:
+triton-1  |   /models/glm_ocr/1/model.py(204): initialize
+triton-1  | 
+triton-1  | E0227 14:26:25.661297 1 model_lifecycle.cc:630] failed to load 'glm_ocr' version 1: Internal: RuntimeError: Failed to initialize real GLM model in strict mode: Tokenizer class ChatGLMTokenizer does not exist or is not currently imported.
+triton-1  | 
+triton-1  | At:
+triton-1  |   /models/glm_ocr/1/model.py(204): initialize
+triton-1  | 
+triton-1  | I0227 14:26:25.661444 1 model_lifecycle.cc:765] failed to load 'glm_ocr'
+triton-1  | I0227 14:26:25.661710 1 server.cc:606] 
+triton-1  | +------------------+------+
+triton-1  | | Repository Agent | Path |
+triton-1  | +------------------+------+
+triton-1  | +------------------+------+
+triton-1  | 
+triton-1  | I0227 14:26:25.661780 1 server.cc:633] 
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Backend | Path                                                  | Config                                                                                                                                                        |
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | python  | /opt/tritonserver/backends/python/libtriton_python.so | {"cmdline":{"auto-complete-config":"true","backend-directory":"/opt/tritonserver/backends","min-compute-capability":"6.000000","default-max-batch-size":"4"}} |
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0227 14:26:25.661878 1 server.cc:676] 
+triton-1  | +---------+---------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Model   | Version | Status                                                                                                                                                                 |
+triton-1  | +---------+---------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | glm_ocr | 1       | UNAVAILABLE: Internal: RuntimeError: Failed to initialize real GLM model in strict mode: Tokenizer class ChatGLMTokenizer does not exist or is not currently imported. |
+triton-1  | |         |         |                                                                                                                                                                        |
+triton-1  | |         |         | At:                                                                                                                                                                    |
+triton-1  | |         |         |   /models/glm_ocr/1/model.py(204): initialize                                                                                                                          |
+triton-1  | +---------+---------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0227 14:26:25.737683 1 metrics.cc:877] Collecting metrics for GPU 0: NVIDIA GeForce RTX 2050
+triton-1  | I0227 14:26:25.742448 1 metrics.cc:770] Collecting CPU metrics
+triton-1  | I0227 14:26:25.742765 1 tritonserver.cc:2498] 
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Option                           | Value                                                                                                                                                                                                           |
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | server_id                        | triton                                                                                                                                                                                                          |
+triton-1  | | server_version                   | 2.42.0                                                                                                                                                                                                          |
+triton-1  | | server_extensions                | classification sequence model_repository model_repository(unload_dependents) schedule_policy model_configuration system_shared_memory cuda_shared_memory binary_tensor_data parameters statistics trace logging |
+triton-1  | | model_repository_path[0]         | /models                                                                                                                                                                                                         |
+triton-1  | | model_control_mode               | MODE_NONE                                                                                                                                                                                                       |
+triton-1  | | strict_model_config              | 0                                                                                                                                                                                                               |
+triton-1  | | rate_limit                       | OFF                                                                                                                                                                                                             |
+triton-1  | | pinned_memory_pool_byte_size     | 268435456                                                                                                                                                                                                       |
+triton-1  | | cuda_memory_pool_byte_size{0}    | 67108864                                                                                                                                                                                                        |
+triton-1  | | min_supported_compute_capability | 6.0                                                                                                                                                                                                             |
+triton-1  | | strict_readiness                 | 1                                                                                                                                                                                                               |
+triton-1  | | exit_timeout                     | 30                                                                                                                                                                                                              |
+triton-1  | | cache_enabled                    | 0                                                                                                                                                                                                               |
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0227 14:26:25.742800 1 server.cc:307] Waiting for in-flight requests to complete.
+triton-1  | I0227 14:26:25.742808 1 server.cc:323] Timeout 30: Found 0 model versions that have in-flight inferences
+triton-1  | I0227 14:26:25.743061 1 server.cc:338] All models are stopped, unloading models
+triton-1  | I0227 14:26:25.743066 1 server.cc:345] Timeout 30: Found 0 live models and 0 in-flight non-inference requests
+triton-1  | error: creating server: Internal - failed to load all models
+triton-1  | W0227 14:26:26.747789 1 metrics.cc:631] Unable to get power limit for GPU 0. Status:Success, value:0.000000
+triton-1  | 
+triton-1  | =============================
+triton-1  | == Triton Inference Server ==
+triton-1  | =============================
+triton-1  | 
+triton-1  | NVIDIA Release 24.01 (build 80100513)
+triton-1  | Triton Server Version 2.42.0
+triton-1  | 
+triton-1  | Copyright (c) 2018-2023, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+triton-1  | 
+triton-1  | Various files include modifications (c) NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+triton-1  | 
+triton-1  | This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+triton-1  | By pulling and using the container, you accept the terms and conditions of this license:
+triton-1  | https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+triton-1  | 
+triton-1  | I0227 14:26:30.511596 1 pinned_memory_manager.cc:275] Pinned memory pool is created at '0x204c00000' with size 268435456
+triton-1  | I0227 14:26:30.512634 1 cuda_memory_manager.cc:107] CUDA memory pool is created on device 0 with size 67108864
+triton-1  | I0227 14:26:30.732010 1 model_lifecycle.cc:461] loading: glm_ocr:1
