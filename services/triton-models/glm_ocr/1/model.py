@@ -149,6 +149,7 @@ class TritonPythonModel:
         return arr
 
     def initialize(self, args):
+        import json
         global MOCK_MODE
         self.model_config = json.loads(args.get("model_config", "{}"))
         logger.info(f"Initializing GLM-OCR (mock={MOCK_MODE}, strict_real={STRICT_REAL_MODE})")
@@ -159,7 +160,35 @@ class TritonPythonModel:
         if not MOCK_MODE:
             try:
                 model_path = os.getenv("GLM_MODEL_PATH", "unsloth/GLM-OCR")
-                self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+                
+                # Download model files and patch tokenizer_config.json
+                from huggingface_hub import snapshot_download
+                
+                try:
+                    local_dir = snapshot_download(
+                        repo_id=model_path,
+                        allow_patterns=["tokenizer*", "*.json", "*.model"],
+                        local_dir="/tmp/local_glm",
+                    )
+                    
+                    # Patch tokenizer_config.json to fix TokenizersBackend class
+                    config_path = os.path.join(local_dir, "tokenizer_config.json")
+                    if os.path.exists(config_path):
+                        with open(config_path, 'r', encoding='utf-8') as f:
+                            local_config = json.load(f)
+                        if local_config.get('tokenizer_class') == 'TokenizersBackend':
+                            local_config['tokenizer_class'] = 'PreTrainedTokenizerFast'
+                            with open(config_path, 'w', encoding='utf-8') as f:
+                                json.dump(local_config, f, ensure_ascii=False)
+                            logger.info("Patched tokenizer_config.json: TokenizersBackend -> PreTrainedTokenizerFast")
+                    
+                    tokenizer_path = local_dir
+                    logger.info(f"Model files downloaded to {local_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to download/patch tokenizer: {e}. Using remote path.")
+                    tokenizer_path = model_path
+                
+                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
                 self.model = AutoModelForCausalLM.from_pretrained(
                     model_path, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
                 self.model.eval()
