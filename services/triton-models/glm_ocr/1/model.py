@@ -137,7 +137,7 @@ def build_prompt(output_formats: str = "text", custom_prompt: str = "",
 
 
 class TritonPythonModel:
-    """Triton Python Backend for GLM-4V-OCR."""
+    """Triton Python Backend for GLM-OCR."""
 
     @staticmethod
     def _tensor_first_value(tensor):
@@ -158,7 +158,7 @@ class TritonPythonModel:
 
         if not MOCK_MODE:
             try:
-                model_path = os.getenv("GLM_MODEL_PATH", "THUDM/glm-4v-9b")
+                model_path = os.getenv("GLM_MODEL_PATH", "THUDM/glm-ocr")
                 self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
                 self.model = AutoModelForCausalLM.from_pretrained(
                     model_path, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
@@ -226,7 +226,7 @@ class TritonPythonModel:
         return responses
 
     def _real_inference(self, images_tensor, prompt, options):
-        """GPU inference with GLM-4V."""
+        """GPU inference with GLM-OCR."""
         image_ref = self._tensor_first_value(images_tensor)
         if isinstance(image_ref, bytes):
             image_ref = image_ref.decode("utf-8")
@@ -261,7 +261,7 @@ class TritonPythonModel:
 
         result = {
             "content": text,
-            "model": "glm-4v-9b",
+            "model": "glm-ocr",
             "mode": "real",
             "confidence": 0.92,
             "usage": {"prompt_tokens": inputs["input_ids"].shape[1], "completion_tokens": len(generated_ids[0])},
@@ -296,7 +296,7 @@ class TritonPythonModel:
 
         result = {
             "content": content if isinstance(content, str) else json.dumps(content, indent=2),
-            "model": "glm-4v-9b",
+            "model": "glm-ocr",
             "mode": "mock",
             "confidence": round(random.uniform(0.88, 0.96), 2),
             "usage": {"prompt_tokens": len(prompt.split()), "completion_tokens": 256},

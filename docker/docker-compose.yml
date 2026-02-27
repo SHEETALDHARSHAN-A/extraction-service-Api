@@ -98,12 +98,12 @@ services:
       dockerfile: docker/triton.Dockerfile
     ports:
       - "18000:8000" # HTTP
-      - "8001:8001"   # gRPC
-      - "8002:8002"   # Metrics
+      - "8001:8001" # gRPC
+      - "8002:8002" # Metrics
     environment:
       - IDEP_MOCK_INFERENCE=false
       - IDEP_STRICT_REAL=true
-      - GLM_MODEL_PATH=THUDM/glm-4v-9b
+      - GLM_MODEL_PATH=THUDM/glm-ocr
       - HF_HOME=/opt/hf-cache
     volumes:
       - ../services/triton-models:/models
@@ -111,7 +111,7 @@ services:
       - idep_tmp:/tmp/idep
     command: tritonserver --model-repository=/models --allow-gpu-metrics=true
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/v2/health/ready" ]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -122,7 +122,7 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     restart: on-failure
 
   # ═══════════════════════════════════════════

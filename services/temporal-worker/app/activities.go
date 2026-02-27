@@ -393,7 +393,7 @@ func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, opti
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	httpClient := &http.Client{Timeout: 10 * time.Minute}
+	httpClient := &http.Client{Timeout: 30 * time.Minute}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", 0, err

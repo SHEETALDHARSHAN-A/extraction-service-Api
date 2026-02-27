@@ -173,7 +173,7 @@ Every result is wrapped in a **standard envelope**:
 ```json
 {
   "job_id": "a1b2c3d4-...",
-  "model": "glm-4v-9b",
+  "model": "glm-ocr",
   "created_at": "2026-02-26T00:30:00Z",
   "processing_time_ms": 3200,
   "document_confidence": 0.93,
@@ -195,7 +195,7 @@ The `result` field changes based on your options. Here is the **exact schema** f
 ```json
 {
   "job_id": "...",
-  "model": "glm-4v-9b",
+  "model": "glm-ocr",
   "document_confidence": 0.93,
   "page_count": 1,
   "usage": {"prompt_tokens": 45, "completion_tokens": 256},
@@ -476,7 +476,7 @@ The maximum possible output:
 ```json
 {
   "job_id": "a1b2c3d4-...",
-  "model": "glm-4v-9b",
+  "model": "glm-ocr",
   "created_at": "2026-02-26T00:30:00Z",
   "processing_time_ms": 4500,
   "document_confidence": 0.95,
