@@ -125,18 +125,10 @@ This starts **12 containers**:
 | 11 | `grafana` | 3000 | Dashboards |
 | 12 | `jaeger` | 16686 | Distributed tracing |
 
-### Option B: Without GPU (Mock Mode)
+### GPU Requirement
 
-If GPU is not available, edit `docker-compose.yml` and change Triton:
-
-```yaml
-# Remove or comment out the deploy.resources section
-# Set mock mode:
-environment:
-  - IDEP_MOCK_INFERENCE=true
-```
-
-Then run:
+Production deployment requires NVIDIA GPU support for Triton inference.
+Run with the standard production compose file:
 
 ```powershell
 docker-compose -f docker\docker-compose.yml up --build -d

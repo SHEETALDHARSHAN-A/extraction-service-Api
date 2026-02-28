@@ -1,11 +1,9 @@
 # ============================================
 # IDEP End-to-End Docker Test (API -> Temporal -> Triton -> MinIO)
-# Supports mock mode (fast, deterministic) and full GPU mode.
+# Production live stack only.
 # ============================================
 
 param(
-    [ValidateSet("mock", "gpu")]
-    [string]$Mode = "mock",
     [switch]$KeepRunning
 )
 
@@ -99,9 +97,6 @@ $candidateKeys = @("tp-proj-dev-key-123", "dev-key-123")
 New-Item -ItemType Directory -Path $resultsDir -Force | Out-Null
 
 $composeFiles = @("-f", "docker/docker-compose.yml")
-if ($Mode -eq "mock") {
-    $composeFiles += @("-f", "docker/docker-compose.test.yml")
-}
 
 $services = @(
     "db", "redis", "minio", "temporal",
@@ -111,7 +106,7 @@ $services = @(
 
 Push-Location $workspaceRoot
 try {
-    Write-Section "Docker stack startup ($Mode mode)"
+    Write-Section "Docker stack startup (production mode)"
     & docker compose @composeFiles up --build -d @services
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to start docker stack"
@@ -239,7 +234,7 @@ try {
     }
 
     Write-Section "Done"
-    Write-Pass "End-to-end Docker flow succeeded ($Mode mode)"
+    Write-Pass "End-to-end Docker flow succeeded (production mode)"
     Write-Info "Result file: $resultPath"
 }
 catch {

@@ -101,7 +101,6 @@ services:
       - "8001:8001" # gRPC
       - "8002:8002" # Metrics
     environment:
-      - IDEP_MOCK_INFERENCE=false
       - IDEP_STRICT_REAL=true
       - GLM_MODEL_PATH=zai-org/GLM-OCR
       - HF_HOME=/opt/hf-cache
@@ -110,9 +109,9 @@ services:
       - hf_cache:/opt/hf-cache
       - idep_tmp:/tmp/idep
     command: >
-      bash -c "pip install git+https://github.com/huggingface/transformers.git accelerate && tritonserver --model-repository=/models --allow-gpu-metrics=true"
+      tritonserver --model-repository=/models --allow-gpu-metrics=true
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/v2/health/ready" ]
+      test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v2/health/ready', timeout=3)" ]
       interval: 10s
       timeout: 5s
       retries: 30
