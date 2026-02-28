@@ -200,6 +200,17 @@ func uploadDocument(c *gin.Context) {
 	maxPages := c.DefaultPostForm("max_pages", "0")
 	temperature := c.DefaultPostForm("temperature", "0.0")
 	maxTokens := c.DefaultPostForm("max_tokens", "4096")
+	precisionMode := c.DefaultPostForm("precision_mode", "normal")
+	extractFieldsRaw := strings.TrimSpace(c.DefaultPostForm("extract_fields", ""))
+	extractFields := []string{}
+	if extractFieldsRaw != "" {
+		for _, f := range strings.Split(extractFieldsRaw, ",") {
+			f = strings.TrimSpace(f)
+			if f != "" {
+				extractFields = append(extractFields, f)
+			}
+		}
+	}
 
 	// Validate formats (skip if custom prompt provided)
 	if customPrompt == "" {
@@ -260,6 +271,8 @@ func uploadDocument(c *gin.Context) {
 			"max_pages":               maxPages,
 			"temperature":             temperature,
 			"max_tokens":              maxTokens,
+			"precision_mode":          precisionMode,
+			"extract_fields":          extractFields,
 		},
 	}
 
@@ -301,6 +314,8 @@ func uploadDocument(c *gin.Context) {
 			"max_pages":               maxPages,
 			"temperature":             temperature,
 			"max_tokens":              maxTokens,
+			"precision_mode":          precisionMode,
+			"extract_fields":          extractFields,
 		},
 		"result_url": fmt.Sprintf("/jobs/%s/result", jobID),
 		"status_url": fmt.Sprintf("/jobs/%s", jobID),

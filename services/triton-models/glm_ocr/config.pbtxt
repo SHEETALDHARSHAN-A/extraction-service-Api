@@ -18,6 +18,12 @@ input [
     data_type: TYPE_STRING
     dims: [1]
     optional: true
+  },
+  {
+    name: "precision_mode"
+    data_type: TYPE_STRING
+    dims: [1]
+    optional: true
   }
 ]
 output [
@@ -52,6 +58,10 @@ optimization {
   }
 }
 parameters: {
+  key: "GLM_MODEL_PATH"
+  value: { string_value: "zai-org/GLM-OCR" }
+}
+parameters: {
   key: "precision_mode"
-  value: { string_value: "high" }  # For legal/financial docs
+  value: { string_value: "normal" }
 }

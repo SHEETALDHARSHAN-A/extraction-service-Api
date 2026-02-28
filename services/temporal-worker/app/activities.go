@@ -52,6 +52,12 @@ type ExtractionOptions struct {
 	MaxPages              string `json:"max_pages"`
 	Temperature           string `json:"temperature"`
 	MaxTokens             string `json:"max_tokens"`
+	// PrecisionMode controls GLM-OCR inference quality: "normal" (faster) or "high"
+	// (word-level bbox enrichment). Defaults to "normal".
+	PrecisionMode string `json:"precision_mode"`
+	// ExtractFields limits extraction to the listed field names (e.g. ["date", "amount"]).
+	// When empty, all detected content is returned.  Values are case-insensitive.
+	ExtractFields []string `json:"extract_fields"`
 }
 
 // PreprocessOutput from the preprocessing activity
@@ -137,6 +143,20 @@ func parseOptions(input map[string]interface{}) ExtractionOptions {
 		}
 		if v, ok := optMap["max_tokens"].(string); ok {
 			opts.MaxTokens = v
+		}
+		if v, ok := optMap["precision_mode"].(string); ok {
+			opts.PrecisionMode = v
+		}
+		// extract_fields: accept []string or []interface{}
+		switch ef := optMap["extract_fields"].(type) {
+		case []string:
+			opts.ExtractFields = ef
+		case []interface{}:
+			for _, item := range ef {
+				if s, ok := item.(string); ok {
+					opts.ExtractFields = append(opts.ExtractFields, s)
+				}
+			}
 		}
 	}
 	return opts
@@ -245,74 +265,50 @@ func (a *Activities) downloadSourceFromMinIO(ctx context.Context, storagePath, j
 
 // ─── Activity 2: CallTriton ───
 
-// buildPrompt constructs the GLM prompt based on options
+// buildPrompt returns the official GLM-OCR task prompt for the requested output format.
+// Reference: https://github.com/zai-org/GLM-OCR — prompts are fixed task prefixes, not
+// free-form instructions. The model's output structure is controlled via the options JSON.
 func buildPrompt(opts ExtractionOptions) string {
-	// Custom prompt takes priority
+	// Custom prompt takes priority (advanced users may override the task prefix)
 	if opts.Prompt != "" {
-		prompt := opts.Prompt
-		if opts.IncludeCoordinates {
-			prompt += "\n\nFor each text element, provide its bounding box [x, y, width, height] in pixels and a confidence score (0.0-1.0)."
-		}
-		if opts.IncludeWordConfidence {
-			prompt += "\n\nFor each word, provide a confidence score (0.0-1.0)."
-		}
-		if opts.Language != "auto" {
-			prompt += fmt.Sprintf("\n\nDocument language: %s", opts.Language)
-		}
-		return prompt
+		return opts.Prompt
 	}
 
-	// Prebuilt format prompts
-	prompts := map[string]string{
-		"text":       "Extract ALL text from this document image preserving layout and reading order.",
-		"json":       "Extract all information as structured JSON with document_type, fields, and line_items.",
-		"markdown":   "Convert this document to Markdown with headings, tables, and bold labels.",
-		"table":      "Detect and extract ALL tables. Return as JSON array with headers and rows.",
-		"key_value":  "Extract all key-value pairs as a flat JSON object.",
-		"structured": "Comprehensive extraction: document_type, raw_text, fields, tables, handwritten_sections as JSON.",
+	// When the caller requests specific fields, produce a focused extraction prompt.
+	// The Python backend will additionally filter the result to those fields, but
+	// giving the model an explicit list significantly improves precision.
+	if len(opts.ExtractFields) > 0 {
+		return fmt.Sprintf(
+			"Text Recognition: Extract only the following fields from this document: %s. "+
+				"Return a flat JSON object where each key is one of the requested field names.",
+			strings.Join(opts.ExtractFields, ", "),
+		)
 	}
 
+	// Map output formats to official GLM-OCR task prompts
 	formats := strings.Split(opts.OutputFormats, ",")
-	if len(formats) == 1 {
-		if p, ok := prompts[strings.TrimSpace(formats[0])]; ok {
-			prompt := p
-			if opts.IncludeCoordinates {
-				prompt += " Include bounding box [x,y,w,h] and confidence for every element."
-			}
-			if opts.IncludeWordConfidence {
-				prompt += " Include per-word confidence scores."
-			}
-			return prompt
-		}
-	}
+	primary := strings.TrimSpace(strings.ToLower(formats[0]))
 
-	// Multi-format
-	parts := []string{"Analyze this document and provide:\n"}
-	for i, f := range formats {
-		f = strings.TrimSpace(f)
-		if p, ok := prompts[f]; ok {
-			parts = append(parts, fmt.Sprintf("%d. %s: %s", i+1, strings.ToUpper(f), p))
-		}
+	switch primary {
+	case "table":
+		return "Table Recognition:"
+	case "formula":
+		return "Formula Recognition:"
+	default:
+		// text, json, markdown, key_value, structured — all start with text recognition;
+		// output structure is controlled by the options JSON passed to Triton.
+		return "Text Recognition:"
 	}
-	parts = append(parts, "\nReturn as JSON with a key for each requested format.")
-
-	if opts.IncludeCoordinates {
-		parts = append(parts, "Include bounding box [x,y,w,h] and confidence for every element.")
-	}
-	if opts.IncludeWordConfidence {
-		parts = append(parts, "Include per-word confidence scores.")
-	}
-
-	return strings.Join(parts, "\n")
 }
 
 func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*ExtractionOutput, error) {
-	log.Printf("🧠 [Triton] job=%s pages=%d formats=%s", input.JobID, input.PageCount, input.Options.OutputFormats)
+	log.Printf("🧠 [Triton] job=%s pages=%d formats=%s precision=%s",
+		input.JobID, input.PageCount, input.Options.OutputFormats, input.Options.PrecisionMode)
 
-	// Build the prompt from user options
+	// Build the official GLM-OCR task prompt
 	prompt := buildPrompt(input.Options)
 
-	// Build options JSON for Triton
+	// Build options JSON for Triton — controls output structure inside the Python backend
 	optionsJSON, _ := json.Marshal(map[string]interface{}{
 		"include_coordinates":     input.Options.IncludeCoordinates,
 		"include_word_confidence": input.Options.IncludeWordConfidence,
@@ -322,12 +318,19 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 		"granularity":             input.Options.Granularity,
 		"temperature":             input.Options.Temperature,
 		"max_tokens":              input.Options.MaxTokens,
+		"output_format":           strings.TrimSpace(strings.Split(input.Options.OutputFormats, ",")[0]),
+		"extract_fields":          input.Options.ExtractFields,
 	})
 
-	log.Printf("   Prompt: %.80s...", prompt)
-	log.Printf("   Options: %s", string(optionsJSON))
+	log.Printf("   Prompt: %q  Options: %s", prompt, string(optionsJSON))
 
-	var allContent string
+	// ── Per-page inference ──────────────────────────────────────────────────
+	type pageEntry struct {
+		Page   int             `json:"page"`
+		Result json.RawMessage `json:"result"`
+	}
+	var pageEntries []pageEntry
+	var markdownParts []string
 	var totalConfidence float64
 
 	start := time.Now()
@@ -336,24 +339,46 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 		if !filepath.IsAbs(imgPath) {
 			imgPath = filepath.Join("/tmp/idep", imgPath)
 		}
-		pageContent, pageConfidence, err := a.callTritonHTTP(ctx, imgPath, prompt, string(optionsJSON))
+		pageJSON, pageConf, err := a.callTritonHTTP(ctx, imgPath, prompt, string(optionsJSON), input.Options.PrecisionMode)
 		if err != nil {
 			return nil, fmt.Errorf("triton inference failed for page %d (%s): %w", i+1, imgPath, err)
 		}
-		if i > 0 {
-			allContent += "\n---PAGE_BREAK---\n"
+
+		// Hoist per-page markdown into aggregated list
+		var pageData map[string]json.RawMessage
+		if json.Unmarshal([]byte(pageJSON), &pageData) == nil {
+			if mdRaw, ok := pageData["markdown"]; ok {
+				var md string
+				if json.Unmarshal(mdRaw, &md) == nil && md != "" {
+					markdownParts = append(markdownParts, md)
+				}
+			}
 		}
-		allContent += pageContent
-		totalConfidence += pageConfidence
+
+		pageEntries = append(pageEntries, pageEntry{Page: i + 1, Result: json.RawMessage(pageJSON)})
+		totalConfidence += pageConf
 	}
 
 	extractionTime := time.Since(start).Seconds()
 	avgConfidence := totalConfidence / float64(len(input.ImagePaths))
+
+	// ── Aggregate pages into canonical output ───────────────────────────────
+	aggregated := map[string]interface{}{
+		"job_id":     input.JobID,
+		"model":      "zai-org/GLM-OCR",
+		"precision":  input.Options.PrecisionMode,
+		"pages":      pageEntries,
+		"markdown":   strings.Join(markdownParts, "\n\n---\n\n"),
+		"page_count": input.PageCount,
+		"confidence": avgConfidence,
+	}
+	allContentBytes, _ := json.Marshal(aggregated)
+
 	log.Printf("✅ [Triton] job=%s confidence=%.2f time=%.2fs", input.JobID, avgConfidence, extractionTime)
 
 	return &ExtractionOutput{
 		JobID:          input.JobID,
-		RawContent:     allContent,
+		RawContent:     string(allContentBytes),
 		Confidence:     avgConfidence,
 		PageCount:      input.PageCount,
 		ExtractionTime: extractionTime,
@@ -361,31 +386,28 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 	}, nil
 }
 
-func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, options string) (string, float64, error) {
+// callTritonHTTP sends one image to Triton's HTTP inference endpoint and returns the
+// raw JSON result string plus the top-level confidence score.
+func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, options, precisionMode string) (string, float64, error) {
 	tritonURL := fmt.Sprintf("http://%s:%s/v2/models/glm_ocr/infer", a.TritonHost, a.TritonHTTPPort)
 
-	payload := map[string]interface{}{
-		"inputs": []map[string]interface{}{
-			{
-				"name":     "images",
-				"shape":    []int{1, 1},
-				"datatype": "BYTES",
-				"data":     []string{imagePath},
-			},
-			{
-				"name":     "prompt",
-				"shape":    []int{1, 1},
-				"datatype": "BYTES",
-				"data":     []string{prompt},
-			},
-			{
-				"name":     "options",
-				"shape":    []int{1, 1},
-				"datatype": "BYTES",
-				"data":     []string{options},
-			},
-		},
+	// Base input tensors (images, prompt, options are always sent)
+	inputs := []map[string]interface{}{
+		{"name": "images", "shape": []int{1, 1}, "datatype": "BYTES", "data": []string{imagePath}},
+		{"name": "prompt", "shape": []int{1, 1}, "datatype": "BYTES", "data": []string{prompt}},
+		{"name": "options", "shape": []int{1, 1}, "datatype": "BYTES", "data": []string{options}},
 	}
+	// precision_mode is optional — only send when explicitly set
+	if precisionMode != "" {
+		inputs = append(inputs, map[string]interface{}{
+			"name":     "precision_mode",
+			"shape":    []int{1, 1},
+			"datatype": "BYTES",
+			"data":     []string{precisionMode},
+		})
+	}
+
+	payload := map[string]interface{}{"inputs": inputs}
 
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -440,6 +462,17 @@ func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, opti
 
 	if generatedText == "" {
 		return "", 0, fmt.Errorf("missing generated_text in Triton response")
+	}
+
+	// Confidence comes from the Triton output tensor; if absent (0), try the JSON payload.
+	// The new GLM-OCR backend embeds "confidence" inside the generated_text JSON as well.
+	if confidence == 0 {
+		var result map[string]interface{}
+		if json.Unmarshal([]byte(generatedText), &result) == nil {
+			if c, ok := result["confidence"].(float64); ok && c > 0 {
+				confidence = c
+			}
+		}
 	}
 
 	return generatedText, confidence, nil
@@ -620,22 +653,28 @@ func (a *Activities) PostProcess(ctx context.Context, input *ExtractionOutput) (
 		return nil, fmt.Errorf("post-processing failed: %s", resp.Error)
 	}
 
-	// Build the final result envelope
+	// Build the final result envelope — includes all fields from the new GLM-OCR schema
+	// so downstream consumers can access pages[].elements[].bbox_2d directly.
 	resultPath := fmt.Sprintf("results/%s/extraction.json", input.JobID)
+
+	// Attempt to unmarshal the aggregated pipeline result for inline embedding
+	var inlineResult interface{}
+	if err := json.Unmarshal([]byte(input.RawContent), &inlineResult); err != nil {
+		// Fallback: treat as opaque string
+		inlineResult = input.RawContent
+	}
 
 	envelope := map[string]interface{}{
 		"job_id":              input.JobID,
-		"model":               "glm-ocr",
+		"model":               "zai-org/GLM-OCR",
 		"document_confidence": resp.ConfidenceScore,
 		"page_count":          input.PageCount,
 		"extraction_time":     input.ExtractionTime,
 		"output_formats":      input.Options.OutputFormats,
+		"precision_mode":      input.Options.PrecisionMode,
 		"result":              resp.StructuredContent,
-		"usage": map[string]interface{}{
-			"prompt_tokens":     45,
-			"completion_tokens": 512,
-		},
-		"timestamp": time.Now().Format(time.RFC3339),
+		"raw_pages":           inlineResult,
+		"timestamp":           time.Now().Format(time.RFC3339),
 	}
 
 	resultJSON, _ := json.MarshalIndent(envelope, "", "  ")

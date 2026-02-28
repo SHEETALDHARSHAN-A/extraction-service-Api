@@ -103,7 +103,7 @@ services:
     environment:
       - IDEP_MOCK_INFERENCE=false
       - IDEP_STRICT_REAL=true
-      - GLM_MODEL_PATH=unsloth/GLM-OCR
+      - GLM_MODEL_PATH=zai-org/GLM-OCR
       - HF_HOME=/opt/hf-cache
     volumes:
       - ../services/triton-models:/models

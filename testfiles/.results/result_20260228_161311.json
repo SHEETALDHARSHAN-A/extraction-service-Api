@@ -1,0 +1,341 @@
+﻿{
+    "document_confidence":  0.95,
+    "extraction_time":  0.020805517,
+    "job_id":  "b13fd2e3-a6c0-4798-b80e-51cbe14b01c3",
+    "model":  "zai-org/GLM-OCR",
+    "output_formats":  "structured",
+    "page_count":  4,
+    "precision_mode":  "high",
+    "raw_pages":  {
+                      "confidence":  0.9590000000000001,
+                      "job_id":  "b13fd2e3-a6c0-4798-b80e-51cbe14b01c3",
+                      "markdown":  "# Mock OCR\n\n- Invoice Date: 2026-02-25\n- Total Amount: $1,358.02\n\n\n---\n\n# Mock OCR\n\n- Invoice Date: 2026-02-25\n- Total Amount: $1,358.02\n\n\n---\n\n# Mock OCR\n\n- Invoice Date: 2026-02-25\n- Total Amount: $1,358.02\n\n\n---\n\n# Mock OCR\n\n- Invoice Date: 2026-02-25\n- Total Amount: $1,358.02\n",
+                      "model":  "zai-org/GLM-OCR",
+                      "page_count":  4,
+                      "pages":  [
+                                    {
+                                        "page":  1,
+                                        "result":  {
+                                                       "confidence":  0.945,
+                                                       "extract_fields":  [
+                                                                              "date",
+                                                                              "amount"
+                                                                          ],
+                                                       "fields":  {
+                                                                      "amount":  "$1,358.02",
+                                                                      "date":  "2026-02-25"
+                                                                  },
+                                                       "markdown":  "# Mock OCR\n\n- Invoice Date: 2026-02-25\n- Total Amount: $1,358.02\n",
+                                                       "mode":  "mock",
+                                                       "model":  "zai-org/GLM-OCR",
+                                                       "pages":  [
+                                                                     {
+                                                                         "elements":  [
+                                                                                          {
+                                                                                              "bbox_2d":  [
+                                                                                                              96,
+                                                                                                              102,
+                                                                                                              332,
+                                                                                                              128
+                                                                                                          ],
+                                                                                              "confidence":  0.97,
+                                                                                              "content":  "Invoice Date: 2026-02-25",
+                                                                                              "index":  1,
+                                                                                              "label":  "text",
+                                                                                              "words":  [
+                                                                                                            {
+                                                                                                                "bbox_2d":  [
+                                                                                                                                96,
+                                                                                                                                102,
+                                                                                                                                126,
+                                                                                                                                128
+                                                                                                                            ],
+                                                                                                                "confidence":  0.94,
+                                                                                                                "word":  "sample"
+                                                                                                            }
+                                                                                                        ]
+                                                                                          },
+                                                                                          {
+                                                                                              "bbox_2d":  [
+                                                                                                              96,
+                                                                                                              134,
+                                                                                                              386,
+                                                                                                              160
+                                                                                                          ],
+                                                                                              "confidence":  0.96,
+                                                                                              "content":  "Total Amount: $1,358.02",
+                                                                                              "index":  2,
+                                                                                              "label":  "text",
+                                                                                              "words":  [
+                                                                                                            {
+                                                                                                                "bbox_2d":  [
+                                                                                                                                96,
+                                                                                                                                134,
+                                                                                                                                126,
+                                                                                                                                160
+                                                                                                                            ],
+                                                                                                                "confidence":  0.94,
+                                                                                                                "word":  "sample"
+                                                                                                            }
+                                                                                                        ]
+                                                                                          }
+                                                                                      ],
+                                                                         "height":  792,
+                                                                         "page":  1,
+                                                                         "width":  612
+                                                                     }
+                                                                 ],
+                                                       "precision":  "high",
+                                                       "prompt":  "Text Recognition: Extract only the following fields from this document: date, amount. Return a flat JSON object where each key is one of the requested field names.",
+                                                       "usage":  {
+                                                                     "completion_tokens":  220,
+                                                                     "prompt_tokens":  42
+                                                                 }
+                                                   }
+                                    },
+                                    {
+                                        "page":  2,
+                                        "result":  {
+                                                       "confidence":  0.97,
+                                                       "extract_fields":  [
+                                                                              "date",
+                                                                              "amount"
+                                                                          ],
+                                                       "fields":  {
+                                                                      "amount":  "$1,358.02",
+                                                                      "date":  "2026-02-25"
+                                                                  },
+                                                       "markdown":  "# Mock OCR\n\n- Invoice Date: 2026-02-25\n- Total Amount: $1,358.02\n",
+                                                       "mode":  "mock",
+                                                       "model":  "zai-org/GLM-OCR",
+                                                       "pages":  [
+                                                                     {
+                                                                         "elements":  [
+                                                                                          {
+                                                                                              "bbox_2d":  [
+                                                                                                              96,
+                                                                                                              102,
+                                                                                                              332,
+                                                                                                              128
+                                                                                                          ],
+                                                                                              "confidence":  0.97,
+                                                                                              "content":  "Invoice Date: 2026-02-25",
+                                                                                              "index":  1,
+                                                                                              "label":  "text",
+                                                                                              "words":  [
+                                                                                                            {
+                                                                                                                "bbox_2d":  [
+                                                                                                                                96,
+                                                                                                                                102,
+                                                                                                                                126,
+                                                                                                                                128
+                                                                                                                            ],
+                                                                                                                "confidence":  0.94,
+                                                                                                                "word":  "sample"
+                                                                                                            }
+                                                                                                        ]
+                                                                                          },
+                                                                                          {
+                                                                                              "bbox_2d":  [
+                                                                                                              96,
+                                                                                                              134,
+                                                                                                              386,
+                                                                                                              160
+                                                                                                          ],
+                                                                                              "confidence":  0.96,
+                                                                                              "content":  "Total Amount: $1,358.02",
+                                                                                              "index":  2,
+                                                                                              "label":  "text",
+                                                                                              "words":  [
+                                                                                                            {
+                                                                                                                "bbox_2d":  [
+                                                                                                                                96,
+                                                                                                                                134,
+                                                                                                                                126,
+                                                                                                                                160
+                                                                                                                            ],
+                                                                                                                "confidence":  0.94,
+                                                                                                                "word":  "sample"
+                                                                                                            }
+                                                                                                        ]
+                                                                                          }
+                                                                                      ],
+                                                                         "height":  792,
+                                                                         "page":  1,
+                                                                         "width":  612
+                                                                     }
+                                                                 ],
+                                                       "precision":  "high",
+                                                       "prompt":  "Text Recognition: Extract only the following fields from this document: date, amount. Return a flat JSON object where each key is one of the requested field names.",
+                                                       "usage":  {
+                                                                     "completion_tokens":  220,
+                                                                     "prompt_tokens":  42
+                                                                 }
+                                                   }
+                                    },
+                                    {
+                                        "page":  3,
+                                        "result":  {
+                                                       "confidence":  0.966,
+                                                       "extract_fields":  [
+                                                                              "date",
+                                                                              "amount"
+                                                                          ],
+                                                       "fields":  {
+                                                                      "amount":  "$1,358.02",
+                                                                      "date":  "2026-02-25"
+                                                                  },
+                                                       "markdown":  "# Mock OCR\n\n- Invoice Date: 2026-02-25\n- Total Amount: $1,358.02\n",
+                                                       "mode":  "mock",
+                                                       "model":  "zai-org/GLM-OCR",
+                                                       "pages":  [
+                                                                     {
+                                                                         "elements":  [
+                                                                                          {
+                                                                                              "bbox_2d":  [
+                                                                                                              96,
+                                                                                                              102,
+                                                                                                              332,
+                                                                                                              128
+                                                                                                          ],
+                                                                                              "confidence":  0.97,
+                                                                                              "content":  "Invoice Date: 2026-02-25",
+                                                                                              "index":  1,
+                                                                                              "label":  "text",
+                                                                                              "words":  [
+                                                                                                            {
+                                                                                                                "bbox_2d":  [
+                                                                                                                                96,
+                                                                                                                                102,
+                                                                                                                                126,
+                                                                                                                                128
+                                                                                                                            ],
+                                                                                                                "confidence":  0.94,
+                                                                                                                "word":  "sample"
+                                                                                                            }
+                                                                                                        ]
+                                                                                          },
+                                                                                          {
+                                                                                              "bbox_2d":  [
+                                                                                                              96,
+                                                                                                              134,
+                                                                                                              386,
+                                                                                                              160
+                                                                                                          ],
+                                                                                              "confidence":  0.96,
+                                                                                              "content":  "Total Amount: $1,358.02",
+                                                                                              "index":  2,
+                                                                                              "label":  "text",
+                                                                                              "words":  [
+                                                                                                            {
+                                                                                                                "bbox_2d":  [
+                                                                                                                                96,
+                                                                                                                                134,
+                                                                                                                                126,
+                                                                                                                                160
+                                                                                                                            ],
+                                                                                                                "confidence":  0.94,
+                                                                                                                "word":  "sample"
+                                                                                                            }
+                                                                                                        ]
+                                                                                          }
+                                                                                      ],
+                                                                         "height":  792,
+                                                                         "page":  1,
+                                                                         "width":  612
+                                                                     }
+                                                                 ],
+                                                       "precision":  "high",
+                                                       "prompt":  "Text Recognition: Extract only the following fields from this document: date, amount. Return a flat JSON object where each key is one of the requested field names.",
+                                                       "usage":  {
+                                                                     "completion_tokens":  220,
+                                                                     "prompt_tokens":  42
+                                                                 }
+                                                   }
+                                    },
+                                    {
+                                        "page":  4,
+                                        "result":  {
+                                                       "confidence":  0.955,
+                                                       "extract_fields":  [
+                                                                              "date",
+                                                                              "amount"
+                                                                          ],
+                                                       "fields":  {
+                                                                      "amount":  "$1,358.02",
+                                                                      "date":  "2026-02-25"
+                                                                  },
+                                                       "markdown":  "# Mock OCR\n\n- Invoice Date: 2026-02-25\n- Total Amount: $1,358.02\n",
+                                                       "mode":  "mock",
+                                                       "model":  "zai-org/GLM-OCR",
+                                                       "pages":  [
+                                                                     {
+                                                                         "elements":  [
+                                                                                          {
+                                                                                              "bbox_2d":  [
+                                                                                                              96,
+                                                                                                              102,
+                                                                                                              332,
+                                                                                                              128
+                                                                                                          ],
+                                                                                              "confidence":  0.97,
+                                                                                              "content":  "Invoice Date: 2026-02-25",
+                                                                                              "index":  1,
+                                                                                              "label":  "text",
+                                                                                              "words":  [
+                                                                                                            {
+                                                                                                                "bbox_2d":  [
+                                                                                                                                96,
+                                                                                                                                102,
+                                                                                                                                126,
+                                                                                                                                128
+                                                                                                                            ],
+                                                                                                                "confidence":  0.94,
+                                                                                                                "word":  "sample"
+                                                                                                            }
+                                                                                                        ]
+                                                                                          },
+                                                                                          {
+                                                                                              "bbox_2d":  [
+                                                                                                              96,
+                                                                                                              134,
+                                                                                                              386,
+                                                                                                              160
+                                                                                                          ],
+                                                                                              "confidence":  0.96,
+                                                                                              "content":  "Total Amount: $1,358.02",
+                                                                                              "index":  2,
+                                                                                              "label":  "text",
+                                                                                              "words":  [
+                                                                                                            {
+                                                                                                                "bbox_2d":  [
+                                                                                                                                96,
+                                                                                                                                134,
+                                                                                                                                126,
+                                                                                                                                160
+                                                                                                                            ],
+                                                                                                                "confidence":  0.94,
+                                                                                                                "word":  "sample"
+                                                                                                            }
+                                                                                                        ]
+                                                                                          }
+                                                                                      ],
+                                                                         "height":  792,
+                                                                         "page":  1,
+                                                                         "width":  612
+                                                                     }
+                                                                 ],
+                                                       "precision":  "high",
+                                                       "prompt":  "Text Recognition: Extract only the following fields from this document: date, amount. Return a flat JSON object where each key is one of the requested field names.",
+                                                       "usage":  {
+                                                                     "completion_tokens":  220,
+                                                                     "prompt_tokens":  42
+                                                                 }
+                                                   }
+                                    }
+                                ],
+                      "precision":  "high"
+                  },
+    "result":  "{\"confidence\":0.9590000000000001,\"job_id\":\"b13fd2e3-a6c0-4798-b80e-51cbe14b01c3\",\"markdown\":\"# Mock OCR\\n\\n- Invoice Date: 2026-02-25\\n- Total Amount: $1,358.02\\n\\n\\n---\\n\\n# Mock OCR\\n\\n- Invoice Date: 2026-02-25\\n- Total Amount: $1,358.02\\n\\n\\n---\\n\\n# Mock OCR\\n\\n- Invoice Date: 2026-02-25\\n- Total Amount: $1,358.02\\n\\n\\n---\\n\\n# Mock OCR\\n\\n- Invoice Date: 2026-02-25\\n- Total Amount: $1,358.02\\n\",\"model\":\"zai-org/GLM-OCR\",\"page_count\":4,\"pages\":[{\"page\":1,\"result\":{\"model\":\"zai-org/GLM-OCR\",\"mode\":\"mock\",\"precision\":\"high\",\"prompt\":\"Text Recognition: Extract only the following fields from this document: date, amount. Return a flat JSON object where each key is one of the requested field names.\",\"extract_fields\":[\"date\",\"amount\"],\"pages\":[{\"page\":1,\"width\":612,\"height\":792,\"elements\":[{\"index\":1,\"label\":\"text\",\"content\":\"Invoice Date: 2026-02-25\",\"bbox_2d\":[96,102,332,128],\"confidence\":0.97,\"words\":[{\"word\":\"sample\",\"bbox_2d\":[96,102,126,128],\"confidence\":0.94}]},{\"index\":2,\"label\":\"text\",\"content\":\"Total Amount: $1,358.02\",\"bbox_2d\":[96,134,386,160],\"confidence\":0.96,\"words\":[{\"word\":\"sample\",\"bbox_2d\":[96,134,126,160],\"confidence\":0.94}]}]}],\"markdown\":\"# Mock OCR\\n\\n- Invoice Date: 2026-02-25\\n- Total Amount: $1,358.02\\n\",\"fields\":{\"date\":\"2026-02-25\",\"amount\":\"$1,358.02\"},\"confidence\":0.945,\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":220}}},{\"page\":2,\"result\":{\"model\":\"zai-org/GLM-OCR\",\"mode\":\"mock\",\"precision\":\"high\",\"prompt\":\"Text Recognition: Extract only the following fields from this document: date, amount. Return a flat JSON object where each key is one of the requested field names.\",\"extract_fields\":[\"date\",\"amount\"],\"pages\":[{\"page\":1,\"width\":612,\"height\":792,\"elements\":[{\"index\":1,\"label\":\"text\",\"content\":\"Invoice Date: 2026-02-25\",\"bbox_2d\":[96,102,332,128],\"confidence\":0.97,\"words\":[{\"word\":\"sample\",\"bbox_2d\":[96,102,126,128],\"confidence\":0.94}]},{\"index\":2,\"label\":\"text\",\"content\":\"Total Amount: $1,358.02\",\"bbox_2d\":[96,134,386,160],\"confidence\":0.96,\"words\":[{\"word\":\"sample\",\"bbox_2d\":[96,134,126,160],\"confidence\":0.94}]}]}],\"markdown\":\"# Mock OCR\\n\\n- Invoice Date: 2026-02-25\\n- Total Amount: $1,358.02\\n\",\"fields\":{\"date\":\"2026-02-25\",\"amount\":\"$1,358.02\"},\"confidence\":0.97,\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":220}}},{\"page\":3,\"result\":{\"model\":\"zai-org/GLM-OCR\",\"mode\":\"mock\",\"precision\":\"high\",\"prompt\":\"Text Recognition: Extract only the following fields from this document: date, amount. Return a flat JSON object where each key is one of the requested field names.\",\"extract_fields\":[\"date\",\"amount\"],\"pages\":[{\"page\":1,\"width\":612,\"height\":792,\"elements\":[{\"index\":1,\"label\":\"text\",\"content\":\"Invoice Date: 2026-02-25\",\"bbox_2d\":[96,102,332,128],\"confidence\":0.97,\"words\":[{\"word\":\"sample\",\"bbox_2d\":[96,102,126,128],\"confidence\":0.94}]},{\"index\":2,\"label\":\"text\",\"content\":\"Total Amount: $1,358.02\",\"bbox_2d\":[96,134,386,160],\"confidence\":0.96,\"words\":[{\"word\":\"sample\",\"bbox_2d\":[96,134,126,160],\"confidence\":0.94}]}]}],\"markdown\":\"# Mock OCR\\n\\n- Invoice Date: 2026-02-25\\n- Total Amount: $1,358.02\\n\",\"fields\":{\"date\":\"2026-02-25\",\"amount\":\"$1,358.02\"},\"confidence\":0.966,\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":220}}},{\"page\":4,\"result\":{\"model\":\"zai-org/GLM-OCR\",\"mode\":\"mock\",\"precision\":\"high\",\"prompt\":\"Text Recognition: Extract only the following fields from this document: date, amount. Return a flat JSON object where each key is one of the requested field names.\",\"extract_fields\":[\"date\",\"amount\"],\"pages\":[{\"page\":1,\"width\":612,\"height\":792,\"elements\":[{\"index\":1,\"label\":\"text\",\"content\":\"Invoice Date: 2026-02-25\",\"bbox_2d\":[96,102,332,128],\"confidence\":0.97,\"words\":[{\"word\":\"sample\",\"bbox_2d\":[96,102,126,128],\"confidence\":0.94}]},{\"index\":2,\"label\":\"text\",\"content\":\"Total Amount: $1,358.02\",\"bbox_2d\":[96,134,386,160],\"confidence\":0.96,\"words\":[{\"word\":\"sample\",\"bbox_2d\":[96,134,126,160],\"confidence\":0.94}]}]}],\"markdown\":\"# Mock OCR\\n\\n- Invoice Date: 2026-02-25\\n- Total Amount: $1,358.02\\n\",\"fields\":{\"date\":\"2026-02-25\",\"amount\":\"$1,358.02\"},\"confidence\":0.955,\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":220}}}],\"precision\":\"high\"}",
+    "timestamp":  "2026-02-28T10:43:10Z"
+}
