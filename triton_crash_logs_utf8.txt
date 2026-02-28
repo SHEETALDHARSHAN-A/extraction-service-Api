@@ -1,0 +1,50 @@
+﻿triton-1  | I0228 06:06:17.105395 1 server.cc:606] 
+triton-1  | +------------------+------+
+triton-1  | | Repository Agent | Path |
+triton-1  | +------------------+------+
+triton-1  | +------------------+------+
+triton-1  | 
+triton-1  | I0228 06:06:17.105442 1 server.cc:633] 
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Backend | Path                                                  | Config                                                                                                                                                        |
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | python  | /opt/tritonserver/backends/python/libtriton_python.so | {"cmdline":{"auto-complete-config":"true","backend-directory":"/opt/tritonserver/backends","min-compute-capability":"6.000000","default-max-batch-size":"4"}} |
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 06:06:17.105542 1 server.cc:676] 
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Model   | Version | Status                                                                                                                                                                                                                                                                         |
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | glm_ocr | 1       | UNAVAILABLE: Internal: RuntimeError: Failed to initialize real GLM model in strict mode: Using a `device_map`, `tp_plan`, `torch.device` context manager or setting `torch.set_default_device(device)` requires `accelerate`. You can install it with `pip install accelerate` |
+triton-1  | |         |         |                                                                                                                                                                                                                                                                                |
+triton-1  | |         |         | At:                                                                                                                                                                                                                                                                            |
+triton-1  | |         |         |   /models/glm_ocr/1/model.py(170): initialize                                                                                                                                                                                                                                  |
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 06:06:17.152651 1 metrics.cc:877] Collecting metrics for GPU 0: NVIDIA GeForce RTX 2050
+triton-1  | I0228 06:06:17.158966 1 metrics.cc:770] Collecting CPU metrics
+triton-1  | I0228 06:06:17.159521 1 tritonserver.cc:2498] 
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Option                           | Value                                                                                                                                                                                                           |
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | server_id                        | triton                                                                                                                                                                                                          |
+triton-1  | | server_version                   | 2.42.0                                                                                                                                                                                                          |
+triton-1  | | server_extensions                | classification sequence model_repository model_repository(unload_dependents) schedule_policy model_configuration system_shared_memory cuda_shared_memory binary_tensor_data parameters statistics trace logging |
+triton-1  | | model_repository_path[0]         | /models                                                                                                                                                                                                         |
+triton-1  | | model_control_mode               | MODE_NONE                                                                                                                                                                                                       |
+triton-1  | | strict_model_config              | 0                                                                                                                                                                                                               |
+triton-1  | | rate_limit                       | OFF                                                                                                                                                                                                             |
+triton-1  | | pinned_memory_pool_byte_size     | 268435456                                                                                                                                                                                                       |
+triton-1  | | cuda_memory_pool_byte_size{0}    | 67108864                                                                                                                                                                                                        |
+triton-1  | | min_supported_compute_capability | 6.0                                                                                                                                                                                                             |
+triton-1  | | strict_readiness                 | 1                                                                                                                                                                                                               |
+triton-1  | | exit_timeout                     | 30                                                                                                                                                                                                              |
+triton-1  | | cache_enabled                    | 0                                                                                                                                                                                                               |
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 06:06:17.159557 1 server.cc:307] Waiting for in-flight requests to complete.
+triton-1  | I0228 06:06:17.159562 1 server.cc:323] Timeout 30: Found 0 model versions that have in-flight inferences
+triton-1  | I0228 06:06:17.159566 1 server.cc:338] All models are stopped, unloading models
+triton-1  | I0228 06:06:17.159568 1 server.cc:345] Timeout 30: Found 0 live models and 0 in-flight non-inference requests
+triton-1  | error: creating server: Internal - failed to load all models
+triton-1  | W0228 06:06:18.165897 1 metrics.cc:631] Unable to get power limit for GPU 0. Status:Success, value:0.000000

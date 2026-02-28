@@ -58,6 +58,7 @@ shared/proto/python/
 
 # Triton / HF cache (runtime artifacts)
 services/triton-models/hf-cache/
+hf_cache_probe/
 
 # Local test outputs
 result-*.json

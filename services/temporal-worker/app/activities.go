@@ -64,11 +64,12 @@ type PreprocessOutput struct {
 
 // ExtractionOutput from the Triton inference activity
 type ExtractionOutput struct {
-	JobID      string            `json:"job_id"`
-	RawContent string            `json:"raw_content"`
-	Confidence float64           `json:"confidence"`
-	PageCount  int               `json:"page_count"`
-	Options    ExtractionOptions `json:"options"`
+	JobID          string            `json:"job_id"`
+	RawContent     string            `json:"raw_content"`
+	Confidence     float64           `json:"confidence"`
+	PageCount      int               `json:"page_count"`
+	ExtractionTime float64           `json:"extraction_time"`
+	Options        ExtractionOptions `json:"options"`
 }
 
 // FinalOutput from the post-processing activity
@@ -329,6 +330,8 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 	var allContent string
 	var totalConfidence float64
 
+	start := time.Now()
+
 	for i, imgPath := range input.ImagePaths {
 		if !filepath.IsAbs(imgPath) {
 			imgPath = filepath.Join("/tmp/idep", imgPath)
@@ -344,15 +347,17 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 		totalConfidence += pageConfidence
 	}
 
+	extractionTime := time.Since(start).Seconds()
 	avgConfidence := totalConfidence / float64(len(input.ImagePaths))
-	log.Printf("✅ [Triton] job=%s confidence=%.2f", input.JobID, avgConfidence)
+	log.Printf("✅ [Triton] job=%s confidence=%.2f time=%.2fs", input.JobID, avgConfidence, extractionTime)
 
 	return &ExtractionOutput{
-		JobID:      input.JobID,
-		RawContent: allContent,
-		Confidence: avgConfidence,
-		PageCount:  input.PageCount,
-		Options:    input.Options,
+		JobID:          input.JobID,
+		RawContent:     allContent,
+		Confidence:     avgConfidence,
+		PageCount:      input.PageCount,
+		ExtractionTime: extractionTime,
+		Options:        input.Options,
 	}, nil
 }
 
@@ -620,9 +625,10 @@ func (a *Activities) PostProcess(ctx context.Context, input *ExtractionOutput) (
 
 	envelope := map[string]interface{}{
 		"job_id":              input.JobID,
-		"model":               "glm-4v-9b",
+		"model":               "glm-ocr",
 		"document_confidence": resp.ConfidenceScore,
 		"page_count":          input.PageCount,
+		"extraction_time":     input.ExtractionTime,
 		"output_formats":      input.Options.OutputFormats,
 		"result":              resp.StructuredContent,
 		"usage": map[string]interface{}{

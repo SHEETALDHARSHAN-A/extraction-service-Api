@@ -109,13 +109,14 @@ services:
       - ../services/triton-models:/models
       - hf_cache:/opt/hf-cache
       - idep_tmp:/tmp/idep
-    command: tritonserver --model-repository=/models --allow-gpu-metrics=true
+    command: >
+      bash -c "pip install git+https://github.com/huggingface/transformers.git accelerate && tritonserver --model-repository=/models --allow-gpu-metrics=true"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/v2/health/ready" ]
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 120s
+      start_period: 600s
     deploy:
       resources:
         reservations:

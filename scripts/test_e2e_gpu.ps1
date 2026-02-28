@@ -53,7 +53,7 @@ catch {
 }
 
 Write-Info "Using compose command: $composeCmd"
-Invoke-Expression "$composeCmd -f docker/docker-compose.yml up --build -d"
+# Invoke-Expression "$composeCmd -f docker/docker-compose.yml up --build -d"
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to start docker stack"
 }

@@ -18,6 +18,7 @@ import json
 import logging
 import numpy as np
 import random
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ STRICT_REAL_MODE = os.getenv("IDEP_STRICT_REAL", "true").lower() == "true"
 if not MOCK_MODE:
     try:
         import torch
-        from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedTokenizerFast
+        from transformers import AutoProcessor, AutoModelForImageTextToText
         from PIL import Image
         import io as _io
     except ImportError as e:
@@ -160,13 +161,12 @@ class TritonPythonModel:
         if not MOCK_MODE:
             try:
                 model_path = os.getenv("GLM_MODEL_PATH", "unsloth/GLM-OCR")
-                tokenizer_path = model_path
-                # Use PreTrainedTokenizerFast directly because unsloth/GLM-OCR's
-                # tokenizer_config.json declares tokenizer_class="TokenizersBackend"
-                # which doesn't exist as a Python class in transformers.
-                self.tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path, trust_remote_code=True)
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    model_path, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
+                self.tokenizer = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+                self.model = AutoModelForImageTextToText.from_pretrained(
+                    model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
+                # Move to the correct GPU device assigned by Triton
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                self.model.to(device)
                 self.model.eval()
                 logger.info("✅ GLM-OCR model loaded on GPU")
             except Exception as e:
@@ -222,11 +222,12 @@ class TritonPythonModel:
                     responses.append(result)
 
             except Exception as e:
-                logger.error(f"Inference error: {e}")
+                err_trace = traceback.format_exc()
+                logger.error(f"Inference error: {e}\n{err_trace}")
                 if pb_utils:
                     responses.append(pb_utils.InferenceResponse(error=pb_utils.TritonError(str(e))))
                 else:
-                    responses.append({"error": str(e)})
+                    responses.append({"error": str(e), "traceback": err_trace})
 
         return responses
 
@@ -244,10 +245,19 @@ class TritonPythonModel:
             image_data = images_tensor.as_numpy()
             img = Image.fromarray(image_data)
 
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "image", "image": img}, {"type": "text", "text": prompt}]
+            }
+        ]
+        
         inputs = self.tokenizer.apply_chat_template(
-            [{"role": "user", "image": img, "content": prompt}],
-            add_generation_prompt=True, tokenize=True,
-            return_tensors="pt", return_dict=True,
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt"
         ).to(self.model.device)
 
         max_new_tokens = 512

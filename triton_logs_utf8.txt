@@ -1,0 +1,286 @@
+﻿triton-1  | 
+triton-1  | =============================
+triton-1  | == Triton Inference Server ==
+triton-1  | =============================
+triton-1  | 
+triton-1  | NVIDIA Release 24.01 (build 80100513)
+triton-1  | Triton Server Version 2.42.0
+triton-1  | 
+triton-1  | Copyright (c) 2018-2023, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+triton-1  | 
+triton-1  | Various files include modifications (c) NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+triton-1  | 
+triton-1  | This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+triton-1  | By pulling and using the container, you accept the terms and conditions of this license:
+triton-1  | https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+triton-1  | 
+triton-1  | I0228 05:45:14.450580 1 pinned_memory_manager.cc:275] Pinned memory pool is created at '0x204c00000' with size 268435456
+triton-1  | I0228 05:45:14.450740 1 cuda_memory_manager.cc:107] CUDA memory pool is created on device 0 with size 67108864
+triton-1  | I0228 05:45:14.610924 1 model_lifecycle.cc:461] loading: glm_ocr:1
+triton-1  | I0228 05:45:22.496109 1 python_be.cc:2362] TRITONBACKEND_ModelInstanceInitialize: glm_ocr_0_0 (GPU device 0)
+triton-1  | The tokenizer class you load from this checkpoint is not the same type as the class this function is called from. It may result in unexpected tokenization. 
+triton-1  | The tokenizer class you load from this checkpoint is 'TokenizersBackend'. 
+triton-1  | The class this function is called from is 'PreTrainedTokenizerFast'.
+triton-1  | I0228 05:45:28.822284 1 pb_stub.cc:346] Failed to initialize Python stub: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys'
+triton-1  | 
+triton-1  | At:
+triton-1  |   /models/glm_ocr/1/model.py(174): initialize
+triton-1  | 
+triton-1  | E0228 05:45:29.384445 1 backend_model.cc:691] ERROR: Failed to create instance: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys'
+triton-1  | 
+triton-1  | At:
+triton-1  |   /models/glm_ocr/1/model.py(174): initialize
+triton-1  | 
+triton-1  | E0228 05:45:29.384633 1 model_lifecycle.cc:630] failed to load 'glm_ocr' version 1: Internal: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys'
+triton-1  | 
+triton-1  | At:
+triton-1  |   /models/glm_ocr/1/model.py(174): initialize
+triton-1  | 
+triton-1  | I0228 05:45:29.384664 1 model_lifecycle.cc:765] failed to load 'glm_ocr'
+triton-1  | I0228 05:45:29.384841 1 server.cc:606] 
+triton-1  | +------------------+------+
+triton-1  | | Repository Agent | Path |
+triton-1  | +------------------+------+
+triton-1  | +------------------+------+
+triton-1  | 
+triton-1  | I0228 05:45:29.384960 1 server.cc:633] 
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Backend | Path                                                  | Config                                                                                                                                                        |
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | python  | /opt/tritonserver/backends/python/libtriton_python.so | {"cmdline":{"auto-complete-config":"true","backend-directory":"/opt/tritonserver/backends","min-compute-capability":"6.000000","default-max-batch-size":"4"}} |
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 05:45:29.385158 1 server.cc:676] 
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Model   | Version | Status                                                                                                                         |
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | glm_ocr | 1       | UNAVAILABLE: Internal: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys' |
+triton-1  | |         |         |                                                                                                                                |
+triton-1  | |         |         | At:                                                                                                                            |
+triton-1  | |         |         |   /models/glm_ocr/1/model.py(174): initialize                                                                                  |
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 05:45:29.451798 1 metrics.cc:877] Collecting metrics for GPU 0: NVIDIA GeForce RTX 2050
+triton-1  | I0228 05:45:29.459852 1 metrics.cc:770] Collecting CPU metrics
+triton-1  | I0228 05:45:29.460176 1 tritonserver.cc:2498] 
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Option                           | Value                                                                                                                                                                                                           |
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | server_id                        | triton                                                                                                                                                                                                          |
+triton-1  | | server_version                   | 2.42.0                                                                                                                                                                                                          |
+triton-1  | | server_extensions                | classification sequence model_repository model_repository(unload_dependents) schedule_policy model_configuration system_shared_memory cuda_shared_memory binary_tensor_data parameters statistics trace logging |
+triton-1  | | model_repository_path[0]         | /models                                                                                                                                                                                                         |
+triton-1  | | model_control_mode               | MODE_NONE                                                                                                                                                                                                       |
+triton-1  | | strict_model_config              | 0                                                                                                                                                                                                               |
+triton-1  | | rate_limit                       | OFF                                                                                                                                                                                                             |
+triton-1  | | pinned_memory_pool_byte_size     | 268435456                                                                                                                                                                                                       |
+triton-1  | | cuda_memory_pool_byte_size{0}    | 67108864                                                                                                                                                                                                        |
+triton-1  | | min_supported_compute_capability | 6.0                                                                                                                                                                                                             |
+triton-1  | | strict_readiness                 | 1                                                                                                                                                                                                               |
+triton-1  | | exit_timeout                     | 30                                                                                                                                                                                                              |
+triton-1  | | cache_enabled                    | 0                                                                                                                                                                                                               |
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 05:45:29.460202 1 server.cc:307] Waiting for in-flight requests to complete.
+triton-1  | I0228 05:45:29.460207 1 server.cc:323] Timeout 30: Found 0 model versions that have in-flight inferences
+triton-1  | I0228 05:45:29.460212 1 server.cc:338] All models are stopped, unloading models
+triton-1  | I0228 05:45:29.460214 1 server.cc:345] Timeout 30: Found 0 live models and 0 in-flight non-inference requests
+triton-1  | error: creating server: Internal - failed to load all models
+triton-1  | W0228 05:45:30.463137 1 metrics.cc:631] Unable to get power limit for GPU 0. Status:Success, value:0.000000
+triton-1  | 
+triton-1  | =============================
+triton-1  | == Triton Inference Server ==
+triton-1  | =============================
+triton-1  | 
+triton-1  | NVIDIA Release 24.01 (build 80100513)
+triton-1  | Triton Server Version 2.42.0
+triton-1  | 
+triton-1  | Copyright (c) 2018-2023, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+triton-1  | 
+triton-1  | Various files include modifications (c) NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+triton-1  | 
+triton-1  | This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+triton-1  | By pulling and using the container, you accept the terms and conditions of this license:
+triton-1  | https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+triton-1  | 
+triton-1  | I0228 05:45:33.693740 1 pinned_memory_manager.cc:275] Pinned memory pool is created at '0x204c00000' with size 268435456
+triton-1  | I0228 05:45:33.693847 1 cuda_memory_manager.cc:107] CUDA memory pool is created on device 0 with size 67108864
+triton-1  | I0228 05:45:33.845984 1 model_lifecycle.cc:461] loading: glm_ocr:1
+triton-1  | I0228 05:45:41.757989 1 python_be.cc:2362] TRITONBACKEND_ModelInstanceInitialize: glm_ocr_0_0 (GPU device 0)
+triton-1  | The tokenizer class you load from this checkpoint is not the same type as the class this function is called from. It may result in unexpected tokenization. 
+triton-1  | The tokenizer class you load from this checkpoint is 'TokenizersBackend'. 
+triton-1  | The class this function is called from is 'PreTrainedTokenizerFast'.
+triton-1  | I0228 05:45:49.730745 1 pb_stub.cc:346] Failed to initialize Python stub: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys'
+triton-1  | 
+triton-1  | At:
+triton-1  |   /models/glm_ocr/1/model.py(174): initialize
+triton-1  | 
+triton-1  | E0228 05:45:50.546537 1 backend_model.cc:691] ERROR: Failed to create instance: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys'
+triton-1  | 
+triton-1  | At:
+triton-1  |   /models/glm_ocr/1/model.py(174): initialize
+triton-1  | 
+triton-1  | E0228 05:45:50.546779 1 model_lifecycle.cc:630] failed to load 'glm_ocr' version 1: Internal: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys'
+triton-1  | 
+triton-1  | At:
+triton-1  |   /models/glm_ocr/1/model.py(174): initialize
+triton-1  | 
+triton-1  | I0228 05:45:50.546846 1 model_lifecycle.cc:765] failed to load 'glm_ocr'
+triton-1  | I0228 05:45:50.547127 1 server.cc:606] 
+triton-1  | +------------------+------+
+triton-1  | | Repository Agent | Path |
+triton-1  | +------------------+------+
+triton-1  | +------------------+------+
+triton-1  | 
+triton-1  | I0228 05:45:50.547191 1 server.cc:633] 
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Backend | Path                                                  | Config                                                                                                                                                        |
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | python  | /opt/tritonserver/backends/python/libtriton_python.so | {"cmdline":{"auto-complete-config":"true","backend-directory":"/opt/tritonserver/backends","min-compute-capability":"6.000000","default-max-batch-size":"4"}} |
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 05:45:50.547236 1 server.cc:676] 
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Model   | Version | Status                                                                                                                         |
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | glm_ocr | 1       | UNAVAILABLE: Internal: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys' |
+triton-1  | |         |         |                                                                                                                                |
+triton-1  | |         |         | At:                                                                                                                            |
+triton-1  | |         |         |   /models/glm_ocr/1/model.py(174): initialize                                                                                  |
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 05:45:50.623376 1 metrics.cc:877] Collecting metrics for GPU 0: NVIDIA GeForce RTX 2050
+triton-1  | I0228 05:45:50.628660 1 metrics.cc:770] Collecting CPU metrics
+triton-1  | I0228 05:45:50.628958 1 tritonserver.cc:2498] 
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Option                           | Value                                                                                                                                                                                                           |
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | server_id                        | triton                                                                                                                                                                                                          |
+triton-1  | | server_version                   | 2.42.0                                                                                                                                                                                                          |
+triton-1  | | server_extensions                | classification sequence model_repository model_repository(unload_dependents) schedule_policy model_configuration system_shared_memory cuda_shared_memory binary_tensor_data parameters statistics trace logging |
+triton-1  | | model_repository_path[0]         | /models                                                                                                                                                                                                         |
+triton-1  | | model_control_mode               | MODE_NONE                                                                                                                                                                                                       |
+triton-1  | | strict_model_config              | 0                                                                                                                                                                                                               |
+triton-1  | | rate_limit                       | OFF                                                                                                                                                                                                             |
+triton-1  | | pinned_memory_pool_byte_size     | 268435456                                                                                                                                                                                                       |
+triton-1  | | cuda_memory_pool_byte_size{0}    | 67108864                                                                                                                                                                                                        |
+triton-1  | | min_supported_compute_capability | 6.0                                                                                                                                                                                                             |
+triton-1  | | strict_readiness                 | 1                                                                                                                                                                                                               |
+triton-1  | | exit_timeout                     | 30                                                                                                                                                                                                              |
+triton-1  | | cache_enabled                    | 0                                                                                                                                                                                                               |
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 05:45:50.628996 1 server.cc:307] Waiting for in-flight requests to complete.
+triton-1  | I0228 05:45:50.629002 1 server.cc:323] Timeout 30: Found 0 model versions that have in-flight inferences
+triton-1  | I0228 05:45:50.629023 1 server.cc:338] All models are stopped, unloading models
+triton-1  | I0228 05:45:50.629026 1 server.cc:345] Timeout 30: Found 0 live models and 0 in-flight non-inference requests
+triton-1  | error: creating server: Internal - failed to load all models
+triton-1  | W0228 05:45:51.631083 1 metrics.cc:631] Unable to get power limit for GPU 0. Status:Success, value:0.000000
+triton-1  | 
+triton-1  | =============================
+triton-1  | == Triton Inference Server ==
+triton-1  | =============================
+triton-1  | 
+triton-1  | NVIDIA Release 24.01 (build 80100513)
+triton-1  | Triton Server Version 2.42.0
+triton-1  | 
+triton-1  | Copyright (c) 2018-2023, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+triton-1  | 
+triton-1  | Various files include modifications (c) NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+triton-1  | 
+triton-1  | This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+triton-1  | By pulling and using the container, you accept the terms and conditions of this license:
+triton-1  | https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+triton-1  | 
+triton-1  | I0228 05:45:55.354130 1 pinned_memory_manager.cc:275] Pinned memory pool is created at '0x204c00000' with size 268435456
+triton-1  | I0228 05:45:55.354269 1 cuda_memory_manager.cc:107] CUDA memory pool is created on device 0 with size 67108864
+triton-1  | I0228 05:45:55.527733 1 model_lifecycle.cc:461] loading: glm_ocr:1
+triton-1  | I0228 05:46:03.651852 1 python_be.cc:2362] TRITONBACKEND_ModelInstanceInitialize: glm_ocr_0_0 (GPU device 0)
+triton-1  | The tokenizer class you load from this checkpoint is not the same type as the class this function is called from. It may result in unexpected tokenization. 
+triton-1  | The tokenizer class you load from this checkpoint is 'TokenizersBackend'. 
+triton-1  | The class this function is called from is 'PreTrainedTokenizerFast'.
+triton-1  | I0228 05:46:10.665306 1 pb_stub.cc:346] Failed to initialize Python stub: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys'
+triton-1  | 
+triton-1  | At:
+triton-1  |   /models/glm_ocr/1/model.py(174): initialize
+triton-1  | 
+triton-1  | E0228 05:46:11.503528 1 backend_model.cc:691] ERROR: Failed to create instance: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys'
+triton-1  | 
+triton-1  | At:
+triton-1  |   /models/glm_ocr/1/model.py(174): initialize
+triton-1  | 
+triton-1  | E0228 05:46:11.504091 1 model_lifecycle.cc:630] failed to load 'glm_ocr' version 1: Internal: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys'
+triton-1  | 
+triton-1  | At:
+triton-1  |   /models/glm_ocr/1/model.py(174): initialize
+triton-1  | 
+triton-1  | I0228 05:46:11.504242 1 model_lifecycle.cc:765] failed to load 'glm_ocr'
+triton-1  | I0228 05:46:11.504471 1 server.cc:606] 
+triton-1  | +------------------+------+
+triton-1  | | Repository Agent | Path |
+triton-1  | +------------------+------+
+triton-1  | +------------------+------+
+triton-1  | 
+triton-1  | I0228 05:46:11.504557 1 server.cc:633] 
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Backend | Path                                                  | Config                                                                                                                                                        |
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | python  | /opt/tritonserver/backends/python/libtriton_python.so | {"cmdline":{"auto-complete-config":"true","backend-directory":"/opt/tritonserver/backends","min-compute-capability":"6.000000","default-max-batch-size":"4"}} |
+triton-1  | +---------+-------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 05:46:11.504640 1 server.cc:676] 
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Model   | Version | Status                                                                                                                         |
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | glm_ocr | 1       | UNAVAILABLE: Internal: RuntimeError: Failed to initialize real GLM model in strict mode: 'list' object has no attribute 'keys' |
+triton-1  | |         |         |                                                                                                                                |
+triton-1  | |         |         | At:                                                                                                                            |
+triton-1  | |         |         |   /models/glm_ocr/1/model.py(174): initialize                                                                                  |
+triton-1  | +---------+---------+--------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 05:46:11.561072 1 metrics.cc:877] Collecting metrics for GPU 0: NVIDIA GeForce RTX 2050
+triton-1  | I0228 05:46:11.564136 1 metrics.cc:770] Collecting CPU metrics
+triton-1  | I0228 05:46:11.564366 1 tritonserver.cc:2498] 
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | Option                           | Value                                                                                                                                                                                                           |
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | | server_id                        | triton                                                                                                                                                                                                          |
+triton-1  | | server_version                   | 2.42.0                                                                                                                                                                                                          |
+triton-1  | | server_extensions                | classification sequence model_repository model_repository(unload_dependents) schedule_policy model_configuration system_shared_memory cuda_shared_memory binary_tensor_data parameters statistics trace logging |
+triton-1  | | model_repository_path[0]         | /models                                                                                                                                                                                                         |
+triton-1  | | model_control_mode               | MODE_NONE                                                                                                                                                                                                       |
+triton-1  | | strict_model_config              | 0                                                                                                                                                                                                               |
+triton-1  | | rate_limit                       | OFF                                                                                                                                                                                                             |
+triton-1  | | pinned_memory_pool_byte_size     | 268435456                                                                                                                                                                                                       |
+triton-1  | | cuda_memory_pool_byte_size{0}    | 67108864                                                                                                                                                                                                        |
+triton-1  | | min_supported_compute_capability | 6.0                                                                                                                                                                                                             |
+triton-1  | | strict_readiness                 | 1                                                                                                                                                                                                               |
+triton-1  | | exit_timeout                     | 30                                                                                                                                                                                                              |
+triton-1  | | cache_enabled                    | 0                                                                                                                                                                                                               |
+triton-1  | +----------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+triton-1  | 
+triton-1  | I0228 05:46:11.564422 1 server.cc:307] Waiting for in-flight requests to complete.
+triton-1  | I0228 05:46:11.564427 1 server.cc:323] Timeout 30: Found 0 model versions that have in-flight inferences
+triton-1  | I0228 05:46:11.564432 1 server.cc:338] All models are stopped, unloading models
+triton-1  | I0228 05:46:11.564434 1 server.cc:345] Timeout 30: Found 0 live models and 0 in-flight non-inference requests
+triton-1  | error: creating server: Internal - failed to load all models
+triton-1  | W0228 05:46:12.568062 1 metrics.cc:631] Unable to get power limit for GPU 0. Status:Success, value:0.000000
+triton-1  | 
+triton-1  | =============================
+triton-1  | == Triton Inference Server ==
+triton-1  | =============================
+triton-1  | 
+triton-1  | NVIDIA Release 24.01 (build 80100513)
+triton-1  | Triton Server Version 2.42.0
+triton-1  | 
+triton-1  | Copyright (c) 2018-2023, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+triton-1  | 
+triton-1  | Various files include modifications (c) NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+triton-1  | 
+triton-1  | This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+triton-1  | By pulling and using the container, you accept the terms and conditions of this license:
+triton-1  | https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+triton-1  | 
+triton-1  | I0228 05:46:16.128160 1 pinned_memory_manager.cc:275] Pinned memory pool is created at '0x204c00000' with size 268435456
+triton-1  | I0228 05:46:16.128431 1 cuda_memory_manager.cc:107] CUDA memory pool is created on device 0 with size 67108864
+triton-1  | I0228 05:46:16.314254 1 model_lifecycle.cc:461] loading: glm_ocr:1
