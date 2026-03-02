@@ -56,7 +56,7 @@ services:
       temporal:
         condition: service_started
       triton:
-        condition: service_healthy
+        condition: service_started
       preprocessing-service:
         condition: service_started
       postprocessing-service:
@@ -108,14 +108,19 @@ services:
       - ../services/triton-models:/models
       - hf_cache:/opt/hf-cache
       - idep_tmp:/tmp/idep
-    command: >
-      tritonserver --model-repository=/models --allow-gpu-metrics=true
+    command:
+      - bash
+      - -c
+      - |
+        export LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/nvidia/cuda_runtime/lib:$$LD_LIBRARY_PATH
+        pip install --no-deps --force-reinstall safetensors==0.4.5 2>/dev/null
+        exec tritonserver --model-repository=/models --allow-gpu-metrics=true
     healthcheck:
       test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v2/health/ready', timeout=3)" ]
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 600s
+      start_period: 120s
     deploy:
       resources:
         reservations:

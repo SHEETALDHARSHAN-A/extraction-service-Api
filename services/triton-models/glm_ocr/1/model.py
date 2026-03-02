@@ -1,29 +1,29 @@
-﻿"""
-Triton Python Backend â€” GLM-OCR  (zai-org/GLM-OCR)
+"""
+Triton Python Backend " GLM-OCR  (zai-org/GLM-OCR)
 ====================================================
 Industry-standard two-stage document-understanding pipeline:
 
-  Stage 1 â€“ Layout Detection
+  Stage 1 " Layout Detection
     PP-DocLayout-V3 detects every region (text, table, formula, title,
-    figure, â€¦) and returns pixel-level bounding boxes (bbox_2d).
+    figure, ) and returns pixel-level bounding boxes (bbox_2d).
 
-  Stage 2 â€“ Parallel Region Recognition
+  Stage 2 " Parallel Region Recognition
     Each detected region is cropped and sent to the GLM-OCR vision-language
     model with the task-appropriate prompt:
-        â€¢ "Text Recognition:"
-        â€¢ "Table Recognition:"
-        â€¢ "Formula Recognition:"
+         "Text Recognition:"
+         "Table Recognition:"
+         "Formula Recognition:"
 
   Assembly
     Results are merged into the official SDK output schema:
-        [{"index": N, "label": "text", "content": "â€¦", "bbox_2d": [x1,y1,x2,y2]}]
+        [{"index": N, "label": "text", "content": "", "bbox_2d": [x1,y1,x2,y2]}]
 
 Execution paths (chosen automatically at start-up):
-  1. SDK    â€“ glmocr Python SDK (GlmOcr) with embedded vLLM endpoint;
+  1. SDK    " glmocr Python SDK (GlmOcr) with embedded vLLM endpoint;
               provides the complete PP-DocLayout + parallel-OCR pipeline.
-  2. NATIVE â€“ Direct model loading via ðŸ¤— Transformers +
+  2. NATIVE " Direct model loading via -- Transformers +
               PP-DocLayout-V3 via paddlepaddle/paddleocr.
-  3. MOCK   â€“ Deterministic rich output for local dev / CI (no GPU needed).
+  3. MOCK   " Deterministic rich output for local dev / CI (no GPU needed).
 
 Environment variables:
   GLM_MODEL_PATH      HuggingFace model ID or local path
@@ -47,14 +47,14 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# â”€â”€â”€ Environment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# """ Environment """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 MODEL_PATH: str  = os.getenv("GLM_MODEL_PATH", "zai-org/GLM-OCR")
 MOCK_MODE: bool  = os.getenv("IDEP_MOCK_INFERENCE", "false").lower() == "true"
 STRICT_REAL: bool = os.getenv("IDEP_STRICT_REAL",    "true").lower() == "true"
 DEFAULT_PRECISION: str = os.getenv("GLM_PRECISION_MODE", "normal").lower()
 
-# â”€â”€â”€ Optional heavy imports â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# """ Optional heavy imports """"""""""""""""""""""""""""""""""""""""""""""""""
 
 torch = None
 Image = None
@@ -79,7 +79,7 @@ if not MOCK_MODE:
         AutoModelForImageTextToText = _AMFITT
         Image = _Image
         _TRANSFORMERS_OK = True
-        logger.info("âœ… Transformers + PIL available")
+        logger.info("... Transformers + PIL available")
     except ImportError as exc:
         logger.warning("Transformers/PIL not available: %s", exc)
         if STRICT_REAL:
@@ -90,19 +90,19 @@ if not MOCK_MODE:
         try:
             from paddleocr import PPStructure as _PPStructure  # type: ignore  # noqa: F401
             _PADDLEOCR_OK = True
-            logger.info("âœ… PaddleOCR / PP-DocLayout available (stage-1 layout)")
+            logger.info("... PaddleOCR / PP-DocLayout available (stage-1 layout)")
         except ImportError:
-            logger.info("PaddleOCR not installed â€” running full-page OCR (no layout split)")
+            logger.info("PaddleOCR not installed -- running full-page OCR (no layout split)")
 
     try:
         from glmocr import GlmOcr  # type: ignore  # noqa: F401
         _GLMOCR_SDK_OK = True
-        logger.info("âœ… glmocr SDK available")
+        logger.info("... glmocr SDK available")
     except ImportError:
-        logger.info("glmocr SDK not installed â€” using native transformers path")
+        logger.info("glmocr SDK not installed -- using native transformers path")
 
 
-# â”€â”€â”€ GLM-OCR Official Task Prompts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# """ GLM-OCR Official Task Prompts """"""""""""""""""""""""""""""""""""""""""
 # Reference: https://huggingface.co/zai-org/GLM-OCR
 
 TASK_PROMPTS: dict[str, str] = {
@@ -132,7 +132,7 @@ TASK_PROMPTS: dict[str, str] = {
     ),
 }
 
-# Maps PP-DocLayout-V3 region labels â†’ task prompt key
+# Maps PP-DocLayout-V3 region labels ' task prompt key
 LABEL_TO_TASK: dict[str, str] = {
     "text":          "text",  "title":         "text",  "heading":       "text",
     "paragraph":     "text",  "caption":        "text",  "footnote":      "text",
@@ -144,7 +144,7 @@ LABEL_TO_TASK: dict[str, str] = {
     "code":          "text",  "reference":      "text",  "abstract":      "text",
 }
 
-# â”€â”€â”€ Output schema (mirrors official glmocr SDK) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# """ Output schema (mirrors official glmocr SDK) """""""""""""""""""""""""""""
 
 def _make_element(
     index: int,
@@ -206,14 +206,14 @@ def _assemble_result(
     }
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ****************************************************************************
 # TritonPythonModel
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ****************************************************************************
 
 class TritonPythonModel:
     """Triton Python Backend for GLM-OCR with PP-DocLayout spatial pipeline."""
 
-    # â”€â”€ Triton lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # "" Triton lifecycle """"""""""""""""""""""""""""""""""""""""""""""""""""
 
     def initialize(self, args: dict) -> None:
         global MOCK_MODE
@@ -232,20 +232,20 @@ class TritonPythonModel:
 
 
         if MOCK_MODE:
-            logger.warning("âš ï¸  MOCK inference mode active â€” no GPU used")
+            logger.warning("  MOCK inference mode active -- no GPU used")
             return
 
-        # â”€â”€ Path A: official glmocr SDK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # "" Path A: official glmocr SDK """""""""""""""""""""""""""""""""""
         if _GLMOCR_SDK_OK:
             try:
                 from glmocr import GlmOcr  # type: ignore
                 self.sdk_parser = GlmOcr()
-                logger.info("âœ… GLM-OCR via official SDK")
+                logger.info("... GLM-OCR via official SDK")
                 return
             except Exception as exc:
-                logger.warning("glmocr SDK init failed (%s) â€” falling back to native", exc)
+                logger.warning("glmocr SDK init failed (%s) -- falling back to native", exc)
 
-        # â”€â”€ Path B: Native Transformers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # "" Path B: Native Transformers """""""""""""""""""""""""""""""""""
         if not _TRANSFORMERS_OK:
             if STRICT_REAL:
                 raise RuntimeError("Transformers unavailable in strict-real mode")
@@ -253,26 +253,34 @@ class TritonPythonModel:
             return
 
         try:
-            logger.info("Loading %s â€¦", MODEL_PATH)
+            logger.info("Loading %s ", MODEL_PATH)
             self.processor = AutoProcessor.from_pretrained(
                 MODEL_PATH, trust_remote_code=True
             )
+            # Use float16 instead of bfloat16 -- RTX 2050 (Turing/Ada) handles
+            # fp16 natively, while bf16 may be software-emulated and very slow.
             self.model = AutoModelForImageTextToText.from_pretrained(
                 MODEL_PATH,
-                torch_dtype=torch.bfloat16,
+                torch_dtype=torch.float16,
                 device_map="auto",
                 trust_remote_code=True,
             )
             self.model.eval()
-            logger.info("âœ… GLM-OCR model loaded  device=%s", next(self.model.parameters()).device)
+            logger.info("... GLM-OCR model loaded  device=%s", next(self.model.parameters()).device)
+
+            # GPU warm-up pass disabled -- on RTX 2050 (4 GB) the first
+            # generate() triggers CUDA JIT compilation which can take 20+ min
+            # with device_map="auto" layer offloading.  Better to let the first
+            # real request absorb the one-time cost.
+            logger.info("GPU warm-up skipped (will JIT on first request)")
         except Exception as exc:
             if STRICT_REAL:
                 raise RuntimeError(f"Model load failed in strict-real mode: {exc}") from exc
-            logger.error("Model load failed: %s â€” MOCK mode", exc)
+            logger.error("Model load failed: %s -- MOCK mode", exc)
             MOCK_MODE = True
             return
 
-        # â”€â”€ Path B-ext: PP-DocLayout for spatial stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # "" Path B-ext: PP-DocLayout for spatial stage """"""""""""""""""""
         if _PADDLEOCR_OK:
             try:
                 from paddleocr import PPStructure  # type: ignore
@@ -280,9 +288,9 @@ class TritonPythonModel:
                     table=True, ocr=False, show_log=False,
                     layout_model_dir=os.getenv("PADDLEOCR_HOME", "/opt/paddleocr"),
                 )
-                logger.info("âœ… PP-DocLayout-V3 ready")
+                logger.info("... PP-DocLayout-V3 ready")
             except Exception as exc:
-                logger.warning("PP-DocLayout init failed (%s) â€” layout stage disabled", exc)
+                logger.warning("PP-DocLayout init failed (%s) -- layout stage disabled", exc)
 
     def finalize(self) -> None:
         logger.info("Finalizing GLM-OCR backend")
@@ -291,7 +299,7 @@ class TritonPythonModel:
             del self.processor
             torch.cuda.empty_cache()
 
-    # â”€â”€ Request dispatch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # "" Request dispatch """"""""""""""""""""""""""""""""""""""""""""""""""""
 
     def execute(self, requests):
         responses = []
@@ -385,10 +393,10 @@ class TritonPythonModel:
             return pb_utils.InferenceResponse(output_tensors=[out_text, out_conf])
         return result
 
-    # â”€â”€ SDK inference path â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # "" SDK inference path """"""""""""""""""""""""""""""""""""""""""""""""""
 
     def _sdk_inference(self, image_ref, output_format, include_coords, precision):
-        """Use official glmocr SDK â€” PP-DocLayout + parallel OCR out of the box."""
+        """Use official glmocr SDK -- PP-DocLayout + parallel OCR out of the box."""
         result_obj   = self.sdk_parser.parse(image_ref)
         raw_elements = result_obj.json_result if hasattr(result_obj, "json_result") else []
         markdown     = result_obj.markdown     if hasattr(result_obj, "markdown")     else ""
@@ -415,7 +423,7 @@ class TritonPythonModel:
             "usage":      {"prompt_tokens": 0, "completion_tokens": 0},
         }
 
-    # â”€â”€ Native two-stage inference â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # "" Native two-stage inference """"""""""""""""""""""""""""""""""""""""""
 
     def _native_inference(
         self, image_ref, prompt_override, output_format,
@@ -423,8 +431,8 @@ class TritonPythonModel:
     ):
         """
         Two-stage pipeline:
-          1. PP-DocLayout-V3  â†’  region bboxes + labels
-          2. GLM-OCR          â†’  text/table/formula for each region
+          1. PP-DocLayout-V3  '  region bboxes + labels
+          2. GLM-OCR          '  text/table/formula for each region
         Falls back to single full-page pass when layout engine is absent.
         """
         img = _load_image(image_ref)
@@ -460,7 +468,7 @@ class TritonPythonModel:
                                 "native", precision, total_pt, total_ct, output_format)
 
     def _detect_layout(self, img):
-        """Run PP-DocLayout-V3 â†’ list of region dicts sorted in reading order."""
+        """Run PP-DocLayout-V3 ' list of region dicts sorted in reading order."""
         img_np  = np.array(img.convert("RGB"))
         results = self.layout_engine(img_np)
         regions = []
@@ -528,9 +536,9 @@ class TritonPythonModel:
         return elements
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ****************************************************************************
 # Mock engine  (rich, deterministic, full official-SDK spatial schema)
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ****************************************************************************
 
 class _MockEngine:
     PAGE_W, PAGE_H = 612, 792
@@ -562,7 +570,7 @@ class _MockEngine:
             "zai-org/GLM-OCR", "mock", precision, 47, 312, output_format,
         )
 
-    # â”€â”€ Element builders â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # "" Element builders """"""""""""""""""""""""""""""""""""""""""""""""""
 
     @classmethod
     def _text(cls, coords):
@@ -692,7 +700,7 @@ class _MockEngine:
             for i, (tex, bbox, conf) in enumerate(formulas)
         ]
 
-    # â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # "" Helpers """""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
     @staticmethod
     def _invoice_table_md():
@@ -728,9 +736,9 @@ class _MockEngine:
         ]
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ****************************************************************************
 # Standalone helpers
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ****************************************************************************
 
 def _first(tensor):
     arr = tensor.as_numpy()
@@ -790,7 +798,7 @@ def _filter_by_fields(result: dict, fields: "list[str]") -> dict:
       with the best-effort extracted values so consumers don't have to walk
       ``pages[].elements[]``.
     """
-    import re  # local import — only used when extract_fields is set
+    import re  # local import -- only used when extract_fields is set
 
     if not fields:
         return result
@@ -806,7 +814,7 @@ def _filter_by_fields(result: dict, fields: "list[str]") -> dict:
             content = el.get("content", "")
             label   = el.get("label",   "text")
 
-            # ── Try JSON content (key_value / json / structured output) ──────
+            # -- Try JSON content (key_value / json / structured output) ------
             try:
                 obj = json.loads(content)
                 if isinstance(obj, dict):
@@ -823,7 +831,7 @@ def _filter_by_fields(result: dict, fields: "list[str]") -> dict:
             except (json.JSONDecodeError, ValueError):
                 pass
 
-            # ── Plain-text element: keep when any keyword appears ────────────
+            # -- Plain-text element: keep when any keyword appears ------------
             searchable = (content + " " + label).lower().replace("-", "_").replace(" ", "_")
             if any(fk in searchable for fk in field_keys):
                 kept.append(el)

@@ -1,6 +1,6 @@
 name: "glm_ocr"
 backend: "python"
-max_batch_size: 16
+max_batch_size: 4
 input [
   {
     name: "images"
@@ -45,18 +45,14 @@ instance_group [
     gpus: [0]
   }
 ]
+# Dynamic batching tuned for low-latency single requests on 0.9B model
 dynamic_batching {
-  preferred_batch_size: [8, 16]
-  max_queue_delay_microseconds: 5000
+  preferred_batch_size: [1, 2]
+  max_queue_delay_microseconds: 100000
 }
-optimization {
-  execution_accelerators {
-    gpu_execution_accelerator : [ {
-      name : "tensorrt"
-      parameters { key: "precision_mode" value: "FP16" }
-    }]
-  }
-}
+# NOTE: No TensorRT accelerator — this is a Python backend model.
+# GLM-OCR runs via PyTorch with bfloat16/float16 on GPU directly.
+# TensorRT execution_accelerators only apply to ONNX/TensorRT backends.
 parameters: {
   key: "GLM_MODEL_PATH"
   value: { string_value: "zai-org/GLM-OCR" }

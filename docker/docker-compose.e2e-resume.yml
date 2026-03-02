@@ -1,0 +1,8 @@
+﻿services:
+  triton:
+    environment:
+      IDEP_STRICT_REAL: "true"
+      IDEP_MOCK_INFERENCE: "false"
+      # Put torch's bundled CUDA 12.1 libs BEFORE the system CUDA 12.3 libs
+      # to avoid cudaGetDriverEntryPointByVersion symbol mismatch
+      LD_LIBRARY_PATH: "/usr/local/lib/python3.10/dist-packages/torch/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib"
