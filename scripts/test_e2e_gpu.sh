@@ -82,8 +82,8 @@ cd "$WORKSPACE_ROOT"
 log_info "Stopping any existing containers..."
 docker-compose -f docker/docker-compose.yml down 2>/dev/null || true
 
-log_info "Building and starting containers..."
-if ! docker-compose -f docker/docker-compose.yml up --build -d; then
+log_info "Starting containers with existing images (no rebuild)..."
+if ! docker-compose -f docker/docker-compose.yml up -d; then
     log_error "Failed to start docker-compose"
     exit 1
 fi

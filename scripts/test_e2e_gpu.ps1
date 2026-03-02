@@ -4,6 +4,7 @@
 # ============================================
 
 param(
+    [switch]$BuildImages,
     [switch]$KeepRunning
 )
 
@@ -107,7 +108,13 @@ $services = @(
 Push-Location $workspaceRoot
 try {
     Write-Section "Docker stack startup (production mode)"
-    & docker compose @composeFiles up --build -d @services
+    if ($BuildImages) {
+        Write-Info "BuildImages enabled: rebuilding service images"
+        & docker compose @composeFiles up --build -d @services
+    } else {
+        Write-Info "Using existing images (no rebuild). Pass -BuildImages to force build."
+        & docker compose @composeFiles up -d @services
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to start docker stack"
     }

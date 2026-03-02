@@ -177,6 +177,10 @@ build:
 
 docker-build:
 	@echo "Building Docker images..."
+	@docker-compose -f $(COMPOSE_FILE) build
+
+docker-build-no-cache:
+	@echo "Building Docker images without cache..."
 	@docker-compose -f $(COMPOSE_FILE) build --no-cache
 
 # Documentation
