@@ -224,6 +224,7 @@ class TritonPythonModel:
         self.precision: str    = DEFAULT_PRECISION
         self.processor         = None
         self.model             = None
+        self._device: str      = "cpu"
         self.layout_engine     = None
         self.sdk_parser        = None
 
@@ -261,14 +262,28 @@ class TritonPythonModel:
             )
             # Use float16 instead of bfloat16 -- RTX 2050 (Turing/Ada) handles
             # fp16 natively, while bf16 may be software-emulated and very slow.
+            #
+            # On small-VRAM GPUs (RTX 2050, 4 GB) we must be careful:
+            #   - device_map="auto" hangs computing the shard map
+            #   - .to("cuda") can OOM if framework overhead is too high
+            # Strategy: load on CPU first, then try GPU; fall back to CPU
+            # inference (slow but won't crash the system).
             self.model = AutoModelForImageTextToText.from_pretrained(
                 MODEL_PATH,
                 torch_dtype=torch.float16,
-                device_map="auto",
                 trust_remote_code=True,
+                low_cpu_mem_usage=True,
             )
+            try:
+                torch.cuda.empty_cache()
+                self.model = self.model.to("cuda")
+                self._device = "cuda"
+            except (torch.cuda.OutOfMemoryError, RuntimeError) as gpu_err:
+                logger.warning("GPU OOM (%s) -- keeping model on CPU (slower)", gpu_err)
+                self._device = "cpu"
+                self.model = self.model.float()  # fp32 for CPU
             self.model.eval()
-            logger.info("... GLM-OCR model loaded  device=%s", next(self.model.parameters()).device)
+            logger.info("... GLM-OCR model loaded  device=%s", self._device)
 
             # GPU warm-up pass disabled -- on RTX 2050 (4 GB) the first
             # generate() triggers CUDA JIT compilation which can take 20+ min
@@ -413,22 +428,18 @@ class TritonPythonModel:
         conf = float(result.get("confidence", 0.90))
 
         if pb_utils:
-            text_obj = np.array([result_json], dtype=np.object_)
-            text_serialized = pb_utils.serialize_byte_tensor(text_obj)
-            if isinstance(text_serialized, (bytes, bytearray)):
-                text_serialized = np.frombuffer(text_serialized, dtype=np.uint8)
-            try:
-                import sys as _sys
-                _sys.stderr.write(
-                    f"[OUT_SHAPE] serialized dtype={getattr(text_serialized, 'dtype', type(text_serialized))} "
-                    f"shape={getattr(text_serialized, 'shape', '?')} size={getattr(text_serialized, 'size', '?')}\n"
-                )
-                _sys.stderr.flush()
-            except Exception:
-                pass
-            out_text = pb_utils.Tensor("generated_text", text_serialized)
-            out_conf = pb_utils.Tensor("confidence",     np.array([conf],       dtype=np.float32))
-            return pb_utils.InferenceResponse(output_tensors=[out_text, out_conf])
+            import sys
+            print(f"[DEBUG] result_json type={type(result_json).__name__} len={len(result_json)}", file=sys.stderr, flush=True)
+            text_np = np.array([result_json], dtype=np.object_)
+            print(f"[DEBUG] text_np shape={text_np.shape} dtype={text_np.dtype}", file=sys.stderr, flush=True)
+            out_text = pb_utils.Tensor("generated_text", text_np)
+            print(f"[DEBUG] out_text tensor created ok", file=sys.stderr, flush=True)
+            conf_np = np.array([conf], dtype=np.float32)
+            out_conf = pb_utils.Tensor("confidence", conf_np)
+            print(f"[DEBUG] out_conf tensor created ok", file=sys.stderr, flush=True)
+            resp = pb_utils.InferenceResponse(output_tensors=[out_text, out_conf])
+            print(f"[DEBUG] InferenceResponse created ok", file=sys.stderr, flush=True)
+            return resp
         return result
 
     # "" SDK inference path """"""""""""""""""""""""""""""""""""""""""""""""""

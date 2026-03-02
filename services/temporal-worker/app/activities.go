@@ -479,7 +479,7 @@ func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, opti
 					}
 					buf[i] = byte(v)
 				}
-				generatedText = string(buf)
+				generatedText = string(bytes.TrimRight(buf, "\x00"))
 				break
 			}
 

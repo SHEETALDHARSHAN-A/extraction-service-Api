@@ -114,7 +114,7 @@ services:
       - |
         export LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/nvidia/cuda_runtime/lib:$$LD_LIBRARY_PATH
         pip install --no-deps --force-reinstall safetensors==0.4.5 2>/dev/null
-        exec tritonserver --model-repository=/models --allow-gpu-metrics=true
+        exec tritonserver --model-repository=/models --allow-gpu-metrics=true --log-verbose=1
     healthcheck:
       test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v2/health/ready', timeout=3)" ]
       interval: 10s
