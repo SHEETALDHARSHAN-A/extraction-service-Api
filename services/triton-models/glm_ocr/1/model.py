@@ -69,6 +69,8 @@ try:
 except ImportError:
     pb_utils = None  # outside Triton (unit-test / standalone)
 
+import struct as _struct
+
 if not MOCK_MODE:
     try:
         import torch as _torch
@@ -323,25 +325,48 @@ class TritonPythonModel:
         options: dict        = {}
         precision_flag: str  = self.precision
 
+        req_params: dict = {}
+        if pb_utils and hasattr(request, "parameters"):
+            try:
+                p = request.parameters()
+                if isinstance(p, str):
+                    req_params = json.loads(p) if p else {}
+                elif isinstance(p, dict):
+                    req_params = p
+            except Exception:
+                req_params = {}
+
+        # Prefer request-level parameters to avoid Python backend tensor
+        # IPC corruption for variable-length string payloads in this setup.
+        if req_params:
+            image_ref = str(req_params.get("image_ref", image_ref) or image_ref)
+            prompt_override = str(req_params.get("prompt", prompt_override) or prompt_override)
+            precision_flag = str(req_params.get("precision_mode", precision_flag) or precision_flag)
+            raw_options = req_params.get("options_json", "")
+            if isinstance(raw_options, (dict, list)):
+                options = raw_options if isinstance(raw_options, dict) else {"_list": raw_options}
+            elif isinstance(raw_options, str) and raw_options.strip():
+                options = json.loads(raw_options)
+
         if pb_utils:
             img_t = pb_utils.get_input_tensor_by_name(request, "images")
-            if img_t is not None:
+            if img_t is not None and not image_ref:
                 v = _first(img_t)
                 image_ref = v.decode() if isinstance(v, bytes) else str(v)
 
             p_t = pb_utils.get_input_tensor_by_name(request, "prompt")
-            if p_t is not None:
+            if p_t is not None and not prompt_override:
                 v = _first(p_t)
                 prompt_override = v.decode() if isinstance(v, bytes) else str(v)
 
             o_t = pb_utils.get_input_tensor_by_name(request, "options")
-            if o_t is not None:
+            if o_t is not None and not options:
                 v = _first(o_t)
-                raw = v.decode() if isinstance(v, bytes) else str(v)
+                raw = v.decode('utf-8') if isinstance(v, bytes) else str(v)
                 options = json.loads(raw) if raw.strip() else {}
 
             pm_t = pb_utils.get_input_tensor_by_name(request, "precision_mode")
-            if pm_t is not None:
+            if pm_t is not None and not precision_flag:
                 v = _first(pm_t)
                 precision_flag = v.decode() if isinstance(v, bytes) else str(v)
 
@@ -388,7 +413,20 @@ class TritonPythonModel:
         conf = float(result.get("confidence", 0.90))
 
         if pb_utils:
-            out_text = pb_utils.Tensor("generated_text", np.array([result_json], dtype=object))
+            text_obj = np.array([result_json], dtype=np.object_)
+            text_serialized = pb_utils.serialize_byte_tensor(text_obj)
+            if isinstance(text_serialized, (bytes, bytearray)):
+                text_serialized = np.frombuffer(text_serialized, dtype=np.uint8)
+            try:
+                import sys as _sys
+                _sys.stderr.write(
+                    f"[OUT_SHAPE] serialized dtype={getattr(text_serialized, 'dtype', type(text_serialized))} "
+                    f"shape={getattr(text_serialized, 'shape', '?')} size={getattr(text_serialized, 'size', '?')}\n"
+                )
+                _sys.stderr.flush()
+            except Exception:
+                pass
+            out_text = pb_utils.Tensor("generated_text", text_serialized)
             out_conf = pb_utils.Tensor("confidence",     np.array([conf],       dtype=np.float32))
             return pb_utils.InferenceResponse(output_tensors=[out_text, out_conf])
         return result
@@ -741,7 +779,16 @@ class _MockEngine:
 # ****************************************************************************
 
 def _first(tensor):
+    """Extract the first scalar value from a Triton tensor.
+
+    For TYPE_UINT8 tensors (used as a workaround for the Triton 2.42.0
+    BYTES serialization bug), decodes the raw uint8 array to bytes.
+    For TYPE_STRING/BYTES tensors, unwraps the numpy object array.
+    """
     arr = tensor.as_numpy()
+    # UINT8 workaround: the client encodes strings as raw UTF-8 byte arrays
+    if hasattr(arr, 'dtype') and arr.dtype == np.uint8:
+        return arr.tobytes()
     while isinstance(arr, np.ndarray):
         if arr.size == 0:
             raise ValueError("Empty tensor")

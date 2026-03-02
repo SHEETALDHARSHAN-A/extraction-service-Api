@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-03-02T20:49:18.952716",
+  "metrics": {
+    "upload_times": [
+      0.11656570434570312
+    ],
+    "processing_times": [],
+    "job_sizes": [
+      0.2431926727294922
+    ],
+    "success_count": 0,
+    "failure_count": 1
+  },
+  "results": []
+}

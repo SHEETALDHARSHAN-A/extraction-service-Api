@@ -1,28 +1,34 @@
 name: "glm_ocr"
 backend: "python"
-max_batch_size: 4
+max_batch_size: 0
+
+# WORKAROUND: Triton Python Backend 2.42.0 has a bug where
+# TYPE_STRING (BYTES) tensor data is corrupted in shared memory IPC.
+# All string inputs use TYPE_UINT8 + variable dims instead.
+# The model.py _first() helper decodes uint8 arrays back to strings.
+
 input [
   {
     name: "images"
-    data_type: TYPE_STRING
-    dims: [1]
+    data_type: TYPE_UINT8
+    dims: [-1]
   },
   {
     name: "prompt"
-    data_type: TYPE_STRING
-    dims: [1]
+    data_type: TYPE_UINT8
+    dims: [-1]
     optional: true
   },
   {
     name: "options"
-    data_type: TYPE_STRING
-    dims: [1]
+    data_type: TYPE_UINT8
+    dims: [-1]
     optional: true
   },
   {
     name: "precision_mode"
-    data_type: TYPE_STRING
-    dims: [1]
+    data_type: TYPE_UINT8
+    dims: [-1]
     optional: true
   }
 ]
@@ -45,14 +51,6 @@ instance_group [
     gpus: [0]
   }
 ]
-# Dynamic batching tuned for low-latency single requests on 0.9B model
-dynamic_batching {
-  preferred_batch_size: [1, 2]
-  max_queue_delay_microseconds: 100000
-}
-# NOTE: No TensorRT accelerator — this is a Python backend model.
-# GLM-OCR runs via PyTorch with bfloat16/float16 on GPU directly.
-# TensorRT execution_accelerators only apply to ONNX/TensorRT backends.
 parameters: {
   key: "GLM_MODEL_PATH"
   value: { string_value: "zai-org/GLM-OCR" }
