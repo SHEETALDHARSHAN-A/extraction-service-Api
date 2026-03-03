@@ -50,11 +50,11 @@ def print_field(label, value, indent=2):
 
 def print_success(message):
     """Print success message."""
-    print(f"✅ {message}")
+    print(f"[OK] {message}")
 
 def print_error(message):
     """Print error message."""
-    print(f"❌ {message}")
+    print(f"[ERROR] {message}")
 
 def print_info(message):
     """Print info message."""
@@ -119,6 +119,16 @@ def upload_document(file_path, options):
         
         if response.status_code == 202:
             return response.json()
+        elif response.status_code == 200:
+            # Document was cached, already processed
+            result = response.json()
+            if result.get('cached') and result.get('job_id'):
+                print_info("Document already processed (cached)")
+                return result
+            else:
+                print_error(f"Unexpected response: {response.status_code}")
+                print(response.text)
+                return None
         else:
             print_error(f"Upload failed: {response.status_code}")
             print(response.text)
@@ -211,7 +221,7 @@ def display_intro(options):
 
 def display_options(options):
     """Display extraction options."""
-    print_section("⚙️  Extraction Options")
+    print_section("[OPTIONS] Extraction Options")
     
     print_field("Document", options['document'])
     print_field("Output Formats", ", ".join(options.get('output_formats', ['text'])))
@@ -227,7 +237,7 @@ def display_options(options):
 
 def display_result_summary(result):
     """Display result summary."""
-    print_section("📊 Extraction Result Summary")
+    print_section("[SUMMARY] Extraction Result Summary")
     
     print_field("Job ID", result.get('job_id', 'N/A'))
     print_field("Model", result.get('model', 'N/A'))
@@ -243,7 +253,7 @@ def display_result_summary(result):
 
 def display_extracted_data(result):
     """Display extracted data."""
-    print_section("📄 Extracted Data")
+    print_section("[DATA] Extracted Data")
     
     result_data = result.get('result', {})
     
@@ -254,8 +264,10 @@ def display_extracted_data(result):
         text = result_data['text']
         for line in text.split('\n')[:20]:  # Show first 20 lines
             print(f"  {line}")
-        if len(text.split('\n')) > 20:
-            print(f"  ... ({len(text.split('\n')) - 20} more lines)")
+        text_lines = text.split('\n')
+        if len(text_lines) > 20:
+            remaining_lines = len(text_lines) - 20
+            print(f"  ... ({remaining_lines} more lines)")
         print("  " + "-" * 76)
     
     if 'json' in result_data or 'document_type' in result_data:
@@ -292,10 +304,12 @@ def display_extracted_data(result):
         print("\n  Markdown Output:")
         print("  " + "-" * 76)
         markdown = result_data['markdown']
-        for line in markdown.split('\n')[:15]:
+        markdown_lines = markdown.split('\n')
+        for line in markdown_lines[:15]:
             print(f"  {line}")
-        if len(markdown.split('\n')) > 15:
-            print(f"  ... ({len(markdown.split('\n')) - 15} more lines)")
+        if len(markdown_lines) > 15:
+            remaining_lines = len(markdown_lines) - 15
+            print(f"  ... ({remaining_lines} more lines)")
         print("  " + "-" * 76)
 
 def save_result(result, output_dir="extraction_results"):
@@ -331,7 +345,7 @@ def run_extraction(options):
     print_success(f"Document found: {Path(options['document']).name}")
     
     # Check API health
-    print_section("🔍 Checking API Status")
+    print_section("[CHECK] Checking API Status")
     print("  Checking API endpoint...")
     
     if not check_api_health():
@@ -346,7 +360,7 @@ def run_extraction(options):
     display_options(options)
     
     # Upload document
-    print_section("📤 Uploading Document")
+    print_section("[UPLOAD] Uploading Document")
     print("  Uploading to API...")
     
     upload_response = upload_document(options['document'], options)
@@ -361,7 +375,7 @@ def run_extraction(options):
     print_field("Status", upload_response.get('status', 'UNKNOWN'))
     
     # Poll for completion
-    print_section("⏳ Processing Document")
+    print_section("[PROCESSING] Processing Document")
     print("  Waiting for extraction to complete...")
     
     job_status = poll_job_status(job_id)
@@ -373,7 +387,7 @@ def run_extraction(options):
     print_success("Processing completed")
     
     # Get result
-    print_section("📥 Retrieving Result")
+    print_section("[RESULT] Retrieving Result")
     print("  Fetching extraction result...")
     
     result = get_job_result(job_id)
@@ -459,10 +473,10 @@ Examples:
         success = run_extraction(options)
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:
-        print("\n\n⚠️  Extraction interrupted by user")
+        print("\n\n[WARNING] Extraction interrupted by user")
         sys.exit(0)
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\n[ERROR] Error: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

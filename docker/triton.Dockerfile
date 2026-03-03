@@ -45,7 +45,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # The --ignore-installed flag above can clobber safetensors with an
 # incompatible version. Re-pin to the version expected by transformers.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install --force-reinstall safetensors==0.4.5
+    pip3 install --force-reinstall safetensors==0.4.5 && \
+    pip3 install --force-reinstall scipy==1.11.4
 
 # ── PaddleOCR / PaddlePaddle (CPU wheel; GPU done at runtime if needed) ───
 # Used for PP-DocLayout-V3 layout detection (stage-1 of the two-stage pipeline)
