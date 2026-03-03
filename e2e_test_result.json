@@ -1,0 +1,53 @@
+{
+  "pages": [
+    {
+      "page": 1,
+      "width": 800,
+      "height": 600,
+      "elements": [
+        {
+          "index": 0,
+          "label": "title",
+          "content": "Document Title",
+          "bbox_2d": [
+            100,
+            50,
+            700,
+            100
+          ],
+          "confidence": 0.95
+        },
+        {
+          "index": 1,
+          "label": "text",
+          "content": "This is sample text content extracted from the document.",
+          "bbox_2d": [
+            100,
+            120,
+            700,
+            300
+          ],
+          "confidence": 0.92
+        },
+        {
+          "index": 2,
+          "label": "table",
+          "content": "| Column 1 | Column 2 |\n|----------|----------|\n| Data 1   | Data 2   |",
+          "bbox_2d": [
+            100,
+            320,
+            700,
+            500
+          ],
+          "confidence": 0.9
+        }
+      ]
+    }
+  ],
+  "mode": "two-stage",
+  "usage": {
+    "layout_detection_ms": 100.0,
+    "content_extraction_ms": 750.0,
+    "total_ms": 850.0
+  }
+}

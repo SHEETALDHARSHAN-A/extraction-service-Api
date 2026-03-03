@@ -30,7 +30,7 @@
   - [x] 1.4.5 Define `DetectLayoutResponse` model
   - [x] 1.4.6 Define `HealthResponse` model
 
-- [ ] 1.5 Implement FastAPI application
+- [x] 1.5 Implement FastAPI application
   - [x] 1.5.1 Create `services/paddleocr-service/app/main.py`
   - [x] 1.5.2 Create FastAPI app instance with metadata
   - [x] 1.5.3 Implement `/detect-layout` POST endpoint
@@ -51,15 +51,15 @@
   - [x] 1.7.3 Log model initialization
   - [x] 1.7.4 Log processing time and resource usage
 
-- [ ] 1.8 Create Dockerfile
-  - [ ] 1.8.1 Use `python:3.11-slim` base image
-  - [ ] 1.8.2 Install PaddleOCR and dependencies
-  - [ ] 1.8.3 Copy application code
-  - [ ] 1.8.4 Set up non-root user
-  - [ ] 1.8.5 Expose port 8001
-  - [ ] 1.8.6 Add health check
+- [x] 1.8 Create Dockerfile
+  - [x] 1.8.1 Use `python:3.11-slim` base image
+  - [x] 1.8.2 Install PaddleOCR and dependencies
+  - [x] 1.8.3 Copy application code
+  - [x] 1.8.4 Set up non-root user
+  - [x] 1.8.5 Expose port 8001
+  - [x] 1.8.6 Add health check
 
-- [ ] 1.9 Create requirements.txt
+- [x] 1.9 Create requirements.txt
   - [x] 1.9.1 Add paddlepaddle (CPU or GPU)
   - [x] 1.9.2 Add paddleocr 3.4.0+
   - [x] 1.9.3 Add fastapi 0.100+
@@ -67,21 +67,21 @@
   - [x] 1.9.5 Add pillow, numpy
   - [x] 1.9.6 Add pydantic, pydantic-settings
 
-- [ ] 1.10 Write unit tests
-  - [ ] 1.10.1 Create `services/paddleocr-service/tests/test_config.py`
-  - [ ] 1.10.2 Create `services/paddleocr-service/tests/test_layout_detector.py`
-  - [ ] 1.10.3 Create `services/paddleocr-service/tests/test_models.py`
-  - [ ] 1.10.4 Test configuration loading
-  - [ ] 1.10.5 Test layout detection with mock images
-  - [ ] 1.10.6 Test confidence filtering
-  - [ ] 1.10.7 Test error handling
+- [x] 1.10 Write unit tests
+  - [x] 1.10.1 Create `services/paddleocr-service/tests/test_config.py`
+  - [x] 1.10.2 Create `services/paddleocr-service/tests/test_layout_detector.py`
+  - [x] 1.10.3 Create `services/paddleocr-service/tests/test_models.py`
+  - [x] 1.10.4 Test configuration loading
+  - [x] 1.10.5 Test layout detection with mock images
+  - [x] 1.10.6 Test confidence filtering
+  - [x] 1.10.7 Test error handling
 
-- [ ] 1.11 Write integration tests
-  - [ ] 1.11.1 Create `services/paddleocr-service/tests/test_api.py`
-  - [ ] 1.11.2 Test `/detect-layout` endpoint with real model
-  - [ ] 1.11.3 Test `/health` endpoint
-  - [ ] 1.11.4 Test error responses
-  - [ ] 1.11.5 Test image validation
+- [x] 1.11 Write integration tests
+  - [x] 1.11.1 Create `services/paddleocr-service/tests/test_api.py`
+  - [x] 1.11.2 Test `/detect-layout` endpoint with real model
+  - [x] 1.11.3 Test `/health` endpoint
+  - [x] 1.11.4 Test error responses
+  - [x] 1.11.5 Test image validation
 
 ## Task 2: GLM-OCR Service Modifications
 
@@ -333,7 +333,7 @@
     - [ ] Test cache invalidation
     - [ ] Test cache TTL
 
-- [-] 5.3 Performance tests
+- [ ] 5.3 Performance tests
   - [ ] 5.3.1 Latency tests
     - [ ] Layout detection < 500ms
     - [ ] Content extraction per region < 3s

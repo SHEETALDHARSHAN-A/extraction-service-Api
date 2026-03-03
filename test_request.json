@@ -1,0 +1,9 @@
+{
+  "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "options": {
+    "min_confidence": 0.5,
+    "detect_tables": true,
+    "detect_formulas": true,
+    "return_image_dimensions": true
+  }
+}
