@@ -1196,8 +1196,15 @@ def _load_image(image_ref: str):
         import base64
         _, b64 = image_ref.split(",", 1)
         return Image.open(_io.BytesIO(base64.b64decode(b64))).convert("RGB")
+    
+    # Handle relative paths - check current directory first, then /tmp/idep
     if not os.path.isabs(image_ref):
+        # Try current directory first
+        if os.path.exists(image_ref):
+            return Image.open(image_ref).convert("RGB")
+        # Fall back to /tmp/idep for Docker compatibility
         image_ref = os.path.join("/tmp/idep", image_ref)
+    
     if not os.path.exists(image_ref):
         raise FileNotFoundError(f"Image not found: {image_ref}")
     return Image.open(image_ref).convert("RGB")
