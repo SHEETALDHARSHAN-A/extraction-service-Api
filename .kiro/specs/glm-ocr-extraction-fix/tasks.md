@@ -1,0 +1,160 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Fault Condition** - GLM-OCR Service Initialization and Output Format Failures
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the bugs exist across initialization, output formats, input handling, and code complexity
+  - **Scoped PBT Approach**: For deterministic bugs, scope the property to the concrete failing case(s) to ensure reproducibility
+  - Test tokenizer initialization: Call `AutoProcessor.from_pretrained("zai-org/GLM-OCR", trust_remote_code=True)` in isolated environment
+  - Test output format compliance: Request each format (text, json, markdown, table, key_value, structured, formula) and validate against documented schemas
+  - Test dynamic input handling: Send variable-length document with custom prompt, verify prompt is used and content not truncated
+  - Test code complexity: Run cyclomatic complexity analyzer on model.py, verify single execution path
+  - Test error handling: Trigger OOM error, verify fallback to CPU with clear logging
+  - Run test on UNFIXED code
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct - it proves the bugs exist)
+  - Document counterexamples found:
+    - Tokenizer import fails with "ChatGLMTokenizer does not exist or is not currently imported"
+    - JSON output fails schema validation (nested structure instead of flat)
+    - Table output returns string instead of structured object
+    - Custom prompts are overridden by default TASK_PROMPTS
+    - Code has 3 separate execution paths (SDK/native/mock) with complexity > 10
+    - Error handling falls back to mock mode silently without logging
+  - Mark task complete when test is written, run, and failures are documented
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Existing GLM-OCR Functionality
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe behavior on UNFIXED code for non-buggy inputs (successful cases)
+  - Write property-based tests capturing observed behavior patterns from Preservation Requirements
+  - Property-based testing generates many test cases for stronger guarantees
+  - Test coordinate extraction: Verify `include_coordinates=true` returns bbox_2d for all elements
+  - Test precision mode: Verify `precision_mode="high"` uses do_sample=False and repetition_penalty=1.15
+  - Test mock mode: Verify `MOCK_MODE=true` returns deterministic data without GPU usage
+  - Test field extraction: Verify `extract_fields=["date", "amount"]` filters results correctly
+  - Test batch processing: Verify multiple documents process successfully through temporal-worker
+  - Test health checks: Verify health endpoints return accurate status
+  - Test result envelope: Verify structure has pages, markdown, confidence, usage fields
+  - Test microservice integration: Verify api-gateway → triton → post-processing flow unchanged
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8_
+
+- [x] 3. Fix GLM-OCR extraction service bugs
+
+  - [x] 3.1 Fix tokenizer initialization with proper environment configuration
+    - Add explicit `sys.path` manipulation to include model cache directory before calling AutoProcessor
+    - Set environment variable `TRANSFORMERS_TRUST_REMOTE_CODE=1` before import
+    - Add try-except with detailed logging for tokenizer import failures
+    - Implement explicit tokenizer class import: `from transformers import AutoTokenizer; tokenizer = AutoTokenizer.from_pretrained(...)`
+    - Fall back to CPU if GPU initialization fails, with clear logging
+    - Validate MODEL_PATH exists or is valid HuggingFace ID before loading
+    - Log all configuration at startup: model path, device, precision, mock mode, strict mode
+    - _Bug_Condition: isBugCondition(input) where input.phase == "initialization" AND input.action == "load_tokenizer" AND tokenizerImportFails(input.model_path)_
+    - _Expected_Behavior: result.tokenizer_loaded == True AND result.model_loaded == True AND result.device IN ["cuda", "cpu"] AND result.error == None_
+    - _Preservation: Existing functionality (coordinates, precision modes, field filtering, batch processing, mock mode, health checks, microservice integration, result envelope) must remain unchanged_
+    - _Requirements: 1.1, 1.5, 2.1, 2.5, 2.10_
+
+  - [x] 3.2 Standardize output format schemas with validation
+    - Define Pydantic models or TypedDict schemas for each output format (TextOutput, JsonOutput, MarkdownOutput, TableOutput, KeyValueOutput, StructuredOutput, FormulaOutput)
+    - Refactor _MockEngine methods to return validated schema-compliant structures
+    - Add schema validation before returning results in _handle()
+    - Ensure _json_format returns flat `{"document_type": str, "fields": dict, "line_items": list}`
+    - Ensure _table returns `[{"table_id": int, "headers": list, "rows": list, "bbox_2d": list}]`
+    - Ensure _key_value returns flat dict with string values (move bbox/confidence to separate field)
+    - Ensure _structured returns `{"document_type": str, "language": str, "raw_text": str, "fields": dict, "tables": list, "handwritten_sections": list}`
+    - _Bug_Condition: isBugCondition(input) where input.phase == "inference" AND input.action == "return_result" AND NOT outputMatchesSchema(input.result, input.requested_format)_
+    - _Expected_Behavior: validateSchema(result.content, input.requested_format) == True AND result.error == None_
+    - _Preservation: Result envelope structure with pages, markdown, confidence, usage fields must remain consistent_
+    - _Requirements: 1.2, 1.8, 2.2, 2.8_
+
+  - [x] 3.3 Simplify execution paths (remove SDK, keep native + mock)
+    - Remove SDK path entirely (delete _sdk_inference, remove glmocr import, remove self.sdk_parser)
+    - Keep only native transformers path as primary execution
+    - Keep mock path as fallback for testing
+    - Simplify initialize() to: try native → catch exception → fall back to mock (if not STRICT_REAL)
+    - Remove _GLMOCR_SDK_OK flag and all SDK-related conditionals
+    - Reduce code from 850+ lines to ~600 lines
+    - _Bug_Condition: isBugCondition(input) where input.phase == "execution" AND codeComplexityScore(input.code) > THRESHOLD AND multipleUncoordinatedFallbackPaths(input.code)_
+    - _Expected_Behavior: codeComplexityScore(result.code) <= 10 AND executionPathCount(result.code) == 1_
+    - _Preservation: Mock mode with MOCK_MODE=true must continue to return deterministic test data without GPU_
+    - _Requirements: 1.4, 2.4, 2.9_
+
+  - [x] 3.4 Implement robust input validation
+    - Add input validation function: `_validate_inputs(image_ref, prompt, options) -> tuple[str, str, dict]`
+    - Validate image_ref: check max length (4096), check format (file path or data: URI), check file exists
+    - Validate prompt_override: check max length (2048), sanitize special characters
+    - Validate options: check types (include_coordinates: bool, output_format: str in VALID_FORMATS, max_tokens: int in range)
+    - Raise clear ValueError with specific message for invalid inputs
+    - Respect custom prompts: use prompt_override directly if provided, don't override with TASK_PROMPTS
+    - _Bug_Condition: isBugCondition(input) where input.phase == "inference" AND input.action == "process_input" AND (input.content_is_dynamic OR input.content_is_variable) AND inputHandlingFails(input)_
+    - _Expected_Behavior: result.content_complete == True AND result.custom_prompt_used == input.custom_prompt_provided AND result.error == None_
+    - _Preservation: Field extraction with extract_fields parameter must continue to filter results to requested fields_
+    - _Requirements: 1.3, 1.7, 2.3, 2.7_
+
+  - [x] 3.5 Implement consistent error handling with GPU → CPU → mock fallback
+    - Define error hierarchy: FatalError (missing model, invalid config) vs RecoverableError (OOM, timeout)
+    - In initialize(): catch FatalError → raise if STRICT_REAL else fall back to mock; catch RecoverableError → try CPU fallback
+    - In execute(): catch all exceptions → log with traceback → return TritonError with clear message
+    - Add device fallback logic: try GPU → catch OOM → clear cache → try CPU → catch error → fall back to mock
+    - Log all fallbacks clearly: "GPU OOM, falling back to CPU" or "Model load failed, falling back to mock mode"
+    - Validate PADDLEOCR_HOME directory exists if layout detection enabled
+    - Validate precision mode is in ["normal", "high", "precision"]
+    - _Bug_Condition: isBugCondition(input) where input.phase == "initialization" OR input.phase == "inference" AND error conditions occur_
+    - _Expected_Behavior: Consistent error handling with clear fallback behavior based on configuration_
+    - _Preservation: Health check endpoints must continue to report service status accurately_
+    - _Requirements: 1.6, 2.6_
+
+  - [x] 3.6 Refactor for maintainability (split large functions, add type hints)
+    - Split large functions: _native_inference (100+ lines) → _prepare_inputs, _run_inference, _postprocess_outputs
+    - Extract common logic: _create_generation_kwargs(precision) → returns dict
+    - Remove duplicate code: _enrich_word_confidence duplicates _run_glm_ocr logic
+    - Add type hints to all functions
+    - Add docstrings to all public methods
+    - Ensure cyclomatic complexity below 10 per function
+    - _Bug_Condition: isBugCondition(input) where input.phase == "execution" AND codeComplexityScore(input.code) > THRESHOLD_
+    - _Expected_Behavior: codeComplexityScore(result.code) <= 10 AND code is maintainable and understandable_
+    - _Preservation: Batch processing through temporal-worker must continue to handle multiple documents_
+    - _Requirements: 2.4, 2.9_
+
+  - [x] 3.7 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - GLM-OCR Service Correct Operation
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms the expected behavior is satisfied
+    - Run bug condition exploration test from step 1
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bugs are fixed)
+    - Verify tokenizer loads successfully on GPU without errors
+    - Verify all output formats match documented schemas
+    - Verify dynamic inputs are handled correctly with custom prompts respected
+    - Verify code complexity is below 10 per function with single execution path
+    - Verify error handling provides clear fallback behavior with logging
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10_
+
+  - [x] 3.8 Verify preservation tests still pass
+    - **Property 2: Preservation** - Existing GLM-OCR Functionality Unchanged
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run preservation property tests from step 2
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Verify coordinate extraction still works with include_coordinates=true
+    - Verify precision mode still uses correct generation parameters
+    - Verify mock mode still returns deterministic data without GPU
+    - Verify field extraction still filters results correctly
+    - Verify batch processing still handles multiple documents
+    - Verify health checks still report accurate status
+    - Verify result envelope structure unchanged
+    - Verify microservice integration unchanged
+    - Confirm all tests still pass after fix (no regressions)
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8_
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Run all property-based tests (fault condition + preservation)
+  - Run all unit tests for individual components
+  - Run integration tests for full pipeline
+  - Verify GPU → CPU → mock fallback works correctly
+  - Verify all output formats produce valid schemas
+  - Verify all existing functionality preserved (no regressions)
+  - Ask the user if questions arise

@@ -57,7 +57,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # ── Misc helpers used by model.py ─────────────────────────────────────────
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install \
-    numpy \
+    "numpy<2" \
     requests
 
 # Ensure CUDA runtime from image toolkit is resolved first by Triton Python backend

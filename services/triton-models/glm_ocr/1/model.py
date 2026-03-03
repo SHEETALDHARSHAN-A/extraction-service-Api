@@ -19,11 +19,9 @@ Industry-standard two-stage document-understanding pipeline:
         [{"index": N, "label": "text", "content": "", "bbox_2d": [x1,y1,x2,y2]}]
 
 Execution paths (chosen automatically at start-up):
-  1. SDK    " glmocr Python SDK (GlmOcr) with embedded vLLM endpoint;
-              provides the complete PP-DocLayout + parallel-OCR pipeline.
-  2. NATIVE " Direct model loading via -- Transformers +
+  1. NATIVE " Direct model loading via Transformers +
               PP-DocLayout-V3 via paddlepaddle/paddleocr.
-  3. MOCK   " Deterministic rich output for local dev / CI (no GPU needed).
+  2. MOCK   " Deterministic rich output for local dev / CI (no GPU needed).
 
 Environment variables:
   GLM_MODEL_PATH      HuggingFace model ID or local path
@@ -41,11 +39,43 @@ import json
 import logging
 import os
 import traceback
-from typing import Any
+from typing import Any, TypedDict, Union
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# """ Output Format Schemas """"""""""""""""""""""""""""""""""""""""""""""""""
+
+class JsonOutputSchema(TypedDict, total=False):
+    """Schema for JSON output format - flat structure with document_type, fields, and line_items."""
+    document_type: str
+    fields: dict[str, Any]
+    line_items: list[dict[str, Any]]
+
+class TableOutputSchema(TypedDict, total=False):
+    """Schema for table output format - structured table with headers, rows, and optional coordinates."""
+    table_id: int
+    title: str
+    headers: list[str]
+    rows: list[list[str]]
+    footer: list[str]
+    bbox_2d: list[int]
+    cell_coordinates: dict[str, Any]
+
+class KeyValueOutputSchema(TypedDict, total=False):
+    """Schema for key-value output format - flat dict with string values or value objects."""
+    pass  # Dynamic keys, values are either strings or {"value": str, "bbox_2d": list, "confidence": float}
+
+class StructuredOutputSchema(TypedDict, total=False):
+    """Schema for structured output format - comprehensive document structure."""
+    document_type: str
+    language: str
+    page_count: int
+    raw_text: str
+    fields: dict[str, Any]
+    tables: list[dict[str, Any]]
+    handwritten_sections: list[Any]
 
 # """ Environment """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
@@ -53,6 +83,16 @@ MODEL_PATH: str  = os.getenv("GLM_MODEL_PATH", "zai-org/GLM-OCR")
 MOCK_MODE: bool  = os.getenv("IDEP_MOCK_INFERENCE", "false").lower() == "true"
 STRICT_REAL: bool = os.getenv("IDEP_STRICT_REAL",    "true").lower() == "true"
 DEFAULT_PRECISION: str = os.getenv("GLM_PRECISION_MODE", "normal").lower()
+
+# """ Error Hierarchy """""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+class FatalError(Exception):
+    """Fatal errors that cannot be recovered from (missing model, invalid config)."""
+    pass
+
+class RecoverableError(Exception):
+    """Recoverable errors that can be handled with fallback (OOM, timeout)."""
+    pass
 
 # """ Optional heavy imports """"""""""""""""""""""""""""""""""""""""""""""""""
 
@@ -62,7 +102,6 @@ AutoProcessor = None
 AutoModelForImageTextToText = None
 _TRANSFORMERS_OK = False
 _PADDLEOCR_OK    = False
-_GLMOCR_SDK_OK   = False
 
 try:
     import triton_python_backend_utils as pb_utils  # type: ignore
@@ -95,13 +134,6 @@ if not MOCK_MODE:
             logger.info("... PaddleOCR / PP-DocLayout available (stage-1 layout)")
         except ImportError:
             logger.info("PaddleOCR not installed -- running full-page OCR (no layout split)")
-
-    try:
-        from glmocr import GlmOcr  # type: ignore  # noqa: F401
-        _GLMOCR_SDK_OK = True
-        logger.info("... glmocr SDK available")
-    except ImportError:
-        logger.info("glmocr SDK not installed -- using native transformers path")
 
 
 # """ GLM-OCR Official Task Prompts """"""""""""""""""""""""""""""""""""""""""
@@ -147,6 +179,62 @@ LABEL_TO_TASK: dict[str, str] = {
 }
 
 # """ Output schema (mirrors official glmocr SDK) """""""""""""""""""""""""""""
+
+def _validate_output_schema(content: str, output_format: str) -> bool:
+    """Validate that output content matches the expected schema for the format."""
+    if output_format in ("text", "markdown", "formula"):
+        # Text-based formats don't need JSON validation
+        return True
+    
+    try:
+        obj = json.loads(content)
+        
+        if output_format == "json":
+            # JSON format should have document_type, fields, and optionally line_items
+            if not isinstance(obj, dict):
+                return False
+            if "document_type" not in obj or "fields" not in obj:
+                return False
+            if not isinstance(obj["fields"], dict):
+                return False
+            if "line_items" in obj and not isinstance(obj["line_items"], list):
+                return False
+            return True
+        
+        elif output_format == "table":
+            # Table format should be a list of table objects
+            if not isinstance(obj, list):
+                return False
+            for table in obj:
+                if not isinstance(table, dict):
+                    return False
+                if "headers" not in table or "rows" not in table:
+                    return False
+                if not isinstance(table["headers"], list) or not isinstance(table["rows"], list):
+                    return False
+            return True
+        
+        elif output_format == "key_value":
+            # Key-value format should be a flat dict
+            if not isinstance(obj, dict):
+                return False
+            return True
+        
+        elif output_format == "structured":
+            # Structured format should have document_type, raw_text, fields, tables
+            if not isinstance(obj, dict):
+                return False
+            required_keys = ["document_type", "raw_text", "fields", "tables"]
+            if not all(k in obj for k in required_keys):
+                return False
+            if not isinstance(obj["fields"], dict) or not isinstance(obj["tables"], list):
+                return False
+            return True
+        
+        return True
+    except (json.JSONDecodeError, ValueError):
+        return False
+
 
 def _make_element(
     index: int,
@@ -209,6 +297,103 @@ def _assemble_result(
 
 
 # ****************************************************************************
+# Input Validation
+# ****************************************************************************
+
+def _validate_inputs(image_ref: str, prompt_override: str, options: dict) -> tuple[str, str, dict]:
+    """
+    Validate and sanitize inputs before processing.
+    
+    Args:
+        image_ref: Image file path or data URI
+        prompt_override: Custom prompt text
+        options: Processing options dict
+    
+    Returns:
+        Tuple of (validated_image_ref, validated_prompt, validated_options)
+    
+    Raises:
+        ValueError: If inputs are invalid
+    """
+    # Validate image_ref
+    if not image_ref:
+        raise ValueError("image_ref is required")
+    
+    if len(image_ref) > 4096:
+        raise ValueError(f"image_ref exceeds maximum length of 4096 characters (got {len(image_ref)})")
+    
+    # Check format: file path or data: URI
+    if not (image_ref.startswith("data:") or image_ref.startswith("/") or 
+            os.path.isabs(image_ref) or os.path.exists(image_ref)):
+        # Try relative path
+        test_path = os.path.join("/tmp/idep", image_ref)
+        if not os.path.exists(test_path):
+            raise ValueError(
+                f"image_ref must be a valid file path or data: URI. "
+                f"File not found: {image_ref}"
+            )
+    
+    # Validate prompt_override
+    if prompt_override and len(prompt_override) > 2048:
+        raise ValueError(
+            f"prompt_override exceeds maximum length of 2048 characters (got {len(prompt_override)})"
+        )
+    
+    # Sanitize special characters in prompt (basic sanitization)
+    if prompt_override:
+        # Remove null bytes and other control characters
+        prompt_override = "".join(char for char in prompt_override if ord(char) >= 32 or char in "\n\r\t")
+    
+    # Validate options
+    validated_options = {}
+    
+    if "include_coordinates" in options:
+        if not isinstance(options["include_coordinates"], bool):
+            raise ValueError("include_coordinates must be a boolean")
+        validated_options["include_coordinates"] = options["include_coordinates"]
+    
+    if "include_word_confidence" in options:
+        if not isinstance(options["include_word_confidence"], bool):
+            raise ValueError("include_word_confidence must be a boolean")
+        validated_options["include_word_confidence"] = options["include_word_confidence"]
+    
+    if "include_page_layout" in options:
+        if not isinstance(options["include_page_layout"], bool):
+            raise ValueError("include_page_layout must be a boolean")
+        validated_options["include_page_layout"] = options["include_page_layout"]
+    
+    if "output_format" in options:
+        valid_formats = ["text", "json", "markdown", "table", "key_value", "structured", "formula"]
+        output_format = str(options["output_format"]).lower()
+        if output_format not in valid_formats:
+            raise ValueError(
+                f"output_format must be one of {valid_formats}, got '{output_format}'"
+            )
+        validated_options["output_format"] = output_format
+    
+    if "max_tokens" in options:
+        try:
+            max_tokens = int(options["max_tokens"])
+            if max_tokens < 64 or max_tokens > 8192:
+                raise ValueError("max_tokens must be between 64 and 8192")
+            validated_options["max_tokens"] = max_tokens
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"max_tokens must be an integer between 64 and 8192: {e}")
+    
+    if "extract_fields" in options:
+        if not isinstance(options["extract_fields"], list):
+            raise ValueError("extract_fields must be a list")
+        validated_options["extract_fields"] = [str(f) for f in options["extract_fields"]]
+    
+    # Copy over any other options that weren't explicitly validated
+    for key, value in options.items():
+        if key not in validated_options:
+            validated_options[key] = value
+    
+    return image_ref, prompt_override, validated_options
+
+
+# ****************************************************************************
 # TritonPythonModel
 # ****************************************************************************
 
@@ -218,6 +403,15 @@ class TritonPythonModel:
     # "" Triton lifecycle """"""""""""""""""""""""""""""""""""""""""""""""""""
 
     def initialize(self, args: dict) -> None:
+        """
+        Initialize the GLM-OCR model with Triton Python Backend.
+        
+        Loads the model on GPU if available, falls back to CPU, and finally to MOCK mode
+        if model loading fails. Also initializes PP-DocLayout-V3 for layout detection.
+        
+        Args:
+            args: Triton initialization arguments containing model_config
+        """
         global MOCK_MODE
         self.model_config: dict = json.loads(args.get("model_config", "{}"))
         self.model_name: str   = MODEL_PATH
@@ -226,29 +420,28 @@ class TritonPythonModel:
         self.model             = None
         self._device: str      = "cpu"
         self.layout_engine     = None
-        self.sdk_parser        = None
+        self.sdk_parser        = None  # Removed but kept for backward compatibility
 
+        # Validate configuration
         logger.info(
             "Initializing GLM-OCR  mock=%s strict_real=%s precision=%s model=%s",
             MOCK_MODE, STRICT_REAL, self.precision, MODEL_PATH,
         )
-
+        
+        # Validate precision mode
+        valid_precision_modes = ["normal", "high", "precision"]
+        if self.precision not in valid_precision_modes:
+            logger.warning(
+                "Invalid precision mode '%s', defaulting to 'normal'. Valid modes: %s",
+                self.precision, valid_precision_modes
+            )
+            self.precision = "normal"
 
         if MOCK_MODE:
             logger.warning("  MOCK inference mode active -- no GPU used")
             return
 
-        # "" Path A: official glmocr SDK """""""""""""""""""""""""""""""""""
-        if _GLMOCR_SDK_OK:
-            try:
-                from glmocr import GlmOcr  # type: ignore
-                self.sdk_parser = GlmOcr()
-                logger.info("... GLM-OCR via official SDK")
-                return
-            except Exception as exc:
-                logger.warning("glmocr SDK init failed (%s) -- falling back to native", exc)
-
-        # "" Path B: Native Transformers """""""""""""""""""""""""""""""""""
+        # "" Native Transformers Path """""""""""""""""""""""""""""""""""""""
         if not _TRANSFORMERS_OK:
             if STRICT_REAL:
                 raise RuntimeError("Transformers unavailable in strict-real mode")
@@ -256,10 +449,51 @@ class TritonPythonModel:
             return
 
         try:
+            # Validate MODEL_PATH exists (for local paths) or is valid HuggingFace ID
+            if not MODEL_PATH.startswith("zai-org/") and not os.path.exists(MODEL_PATH):
+                raise ValueError(f"MODEL_PATH does not exist: {MODEL_PATH}")
+            
             logger.info("Loading %s ", MODEL_PATH)
-            self.processor = AutoProcessor.from_pretrained(
-                MODEL_PATH, trust_remote_code=True
-            )
+            
+            # Set environment variable to enable trust_remote_code
+            os.environ["TRANSFORMERS_TRUST_REMOTE_CODE"] = "1"
+            
+            # Add model cache directory to sys.path for custom tokenizer imports
+            import sys
+            try:
+                # Try older transformers API first
+                from transformers.utils import TRANSFORMERS_CACHE
+                cache_dir = os.getenv("TRANSFORMERS_CACHE", TRANSFORMERS_CACHE)
+            except ImportError:
+                # Fallback for newer transformers versions (5.x+)
+                try:
+                    from transformers.utils import default_cache_path
+                    cache_dir = os.getenv("TRANSFORMERS_CACHE", str(default_cache_path))
+                except ImportError:
+                    # Final fallback - use HF_HOME or default
+                    import pathlib
+                    hf_home = os.getenv("HF_HOME", os.path.join(pathlib.Path.home(), ".cache", "huggingface"))
+                    cache_dir = os.path.join(hf_home, "hub")
+            
+            model_cache_path = os.path.join(cache_dir, "models--" + MODEL_PATH.replace("/", "--"))
+            if os.path.exists(model_cache_path) and model_cache_path not in sys.path:
+                sys.path.insert(0, model_cache_path)
+                logger.info("Added model cache to sys.path: %s", model_cache_path)
+            
+            # Try explicit tokenizer import first
+            try:
+                self.processor = AutoProcessor.from_pretrained(
+                    MODEL_PATH, trust_remote_code=True
+                )
+                logger.info("... Tokenizer loaded successfully")
+            except Exception as tokenizer_exc:
+                logger.error(
+                    "Tokenizer import failed: %s\nModel path: %s\nCache dir: %s\n"
+                    "Ensure trust_remote_code=True and custom tokenizer class is available",
+                    tokenizer_exc, MODEL_PATH, cache_dir
+                )
+                raise
+            
             # Use float16 instead of bfloat16 -- RTX 2050 (Turing/Ada) handles
             # fp16 natively, while bf16 may be software-emulated and very slow.
             #
@@ -274,16 +508,29 @@ class TritonPythonModel:
                 trust_remote_code=True,
                 low_cpu_mem_usage=True,
             )
+            
+            # Try GPU first, fall back to CPU if OOM
             try:
-                torch.cuda.empty_cache()
-                self.model = self.model.to("cuda")
-                self._device = "cuda"
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    self.model = self.model.to("cuda")
+                    self._device = "cuda"
+                    logger.info("... Model loaded on GPU (CUDA)")
+                else:
+                    logger.info("CUDA not available, using CPU")
+                    self._device = "cpu"
+                    self.model = self.model.float()  # fp32 for CPU
             except (torch.cuda.OutOfMemoryError, RuntimeError) as gpu_err:
-                logger.warning("GPU OOM (%s) -- keeping model on CPU (slower)", gpu_err)
+                logger.warning("GPU OOM (%s) -- falling back to CPU (slower)", gpu_err)
+                torch.cuda.empty_cache()
                 self._device = "cpu"
-                self.model = self.model.float()  # fp32 for CPU
+                self.model = self.model.to("cpu").float()  # fp32 for CPU
+            
             self.model.eval()
-            logger.info("... GLM-OCR model loaded  device=%s", self._device)
+            logger.info(
+                "... GLM-OCR model loaded successfully | device=%s | precision=%s | model=%s",
+                self._device, self.precision, MODEL_PATH
+            )
 
             # GPU warm-up pass disabled -- on RTX 2050 (4 GB) the first
             # generate() triggers CUDA JIT compilation which can take 20+ min
@@ -291,25 +538,39 @@ class TritonPythonModel:
             # real request absorb the one-time cost.
             logger.info("GPU warm-up skipped (will JIT on first request)")
         except Exception as exc:
+            tb = traceback.format_exc()
+            logger.error("Model load failed: %s\n%s", exc, tb)
             if STRICT_REAL:
                 raise RuntimeError(f"Model load failed in strict-real mode: {exc}") from exc
-            logger.error("Model load failed: %s -- MOCK mode", exc)
+            logger.warning("Falling back to MOCK mode due to initialization failure")
             MOCK_MODE = True
             return
 
-        # "" Path B-ext: PP-DocLayout for spatial stage """"""""""""""""""""
+        # "" PP-DocLayout for spatial stage """"""""""""""""""""""""""""""""
         if _PADDLEOCR_OK:
             try:
-                from paddleocr import PPStructure  # type: ignore
-                self.layout_engine = PPStructure(
-                    table=True, ocr=False, show_log=False,
-                    layout_model_dir=os.getenv("PADDLEOCR_HOME", "/opt/paddleocr"),
-                )
-                logger.info("... PP-DocLayout-V3 ready")
+                paddleocr_home = os.getenv("PADDLEOCR_HOME", "/opt/paddleocr")
+                if not os.path.exists(paddleocr_home):
+                    logger.warning(
+                        "PADDLEOCR_HOME directory does not exist: %s -- layout stage disabled",
+                        paddleocr_home
+                    )
+                else:
+                    from paddleocr import PPStructure  # type: ignore
+                    self.layout_engine = PPStructure(
+                        table=True, ocr=False, show_log=False,
+                        layout_model_dir=paddleocr_home,
+                    )
+                    logger.info("... PP-DocLayout-V3 ready")
             except Exception as exc:
                 logger.warning("PP-DocLayout init failed (%s) -- layout stage disabled", exc)
 
     def finalize(self) -> None:
+        """
+        Clean up resources when the model is unloaded.
+        
+        Releases GPU memory and deletes model/processor objects.
+        """
         logger.info("Finalizing GLM-OCR backend")
         if self.model is not None and torch is not None:
             del self.model
@@ -319,6 +580,18 @@ class TritonPythonModel:
     # "" Request dispatch """"""""""""""""""""""""""""""""""""""""""""""""""""
 
     def execute(self, requests):
+        """
+        Execute inference requests.
+        
+        Processes each request through _handle method and catches any exceptions,
+        returning them as Triton errors.
+        
+        Args:
+            requests: List of Triton inference requests
+        
+        Returns:
+            List of Triton inference responses
+        """
         responses = []
         for request in requests:
             try:
@@ -385,6 +658,15 @@ class TritonPythonModel:
                 v = _first(pm_t)
                 precision_flag = v.decode() if isinstance(v, bytes) else str(v)
 
+        # Validate inputs
+        try:
+            image_ref, prompt_override, options = _validate_inputs(image_ref, prompt_override, options)
+        except ValueError as e:
+            logger.error("Input validation failed: %s", e)
+            if pb_utils:
+                return pb_utils.InferenceResponse(error=pb_utils.TritonError(f"Invalid input: {e}"))
+            raise
+
         include_coords: bool      = bool(options.get("include_coordinates",     True))
         include_word_conf: bool   = bool(options.get("include_word_confidence", False))
         include_page_layout: bool = bool(options.get("include_page_layout",     False))
@@ -396,8 +678,7 @@ class TritonPythonModel:
         # Empty list means "return everything".
         extract_fields: list      = [str(f) for f in options.get("extract_fields") or []]
 
-        if MOCK_MODE or (self.model is None and self.sdk_parser is None):
-
+        if MOCK_MODE or self.model is None:
             result = _MockEngine.run(
                 image_ref=image_ref,
                 prompt_override=prompt_override,
@@ -407,8 +688,6 @@ class TritonPythonModel:
                 include_page_layout=include_page_layout,
                 precision=precision,
             )
-        elif self.sdk_parser is not None:
-            result = self._sdk_inference(image_ref, output_format, include_coords, precision)
         else:
             result = self._native_inference(
                 image_ref=image_ref,
@@ -424,64 +703,77 @@ class TritonPythonModel:
         if extract_fields:
             result = _filter_by_fields(result, extract_fields)
 
+        # Validate output schema for structured formats
+        if output_format in ("json", "table", "key_value", "structured"):
+            for page in result.get("pages", []):
+                for element in page.get("elements", []):
+                    content = element.get("content", "")
+                    if not _validate_output_schema(content, output_format):
+                        logger.warning(
+                            "Output schema validation failed for format '%s'. Content may not match expected structure.",
+                            output_format
+                        )
+
         result_json = json.dumps(result, ensure_ascii=False, indent=2)
         conf = float(result.get("confidence", 0.90))
 
         if pb_utils:
-            import sys
-            print(f"[DEBUG] result_json type={type(result_json).__name__} len={len(result_json)}", file=sys.stderr, flush=True)
             text_np = np.array([result_json], dtype=np.object_)
-            print(f"[DEBUG] text_np shape={text_np.shape} dtype={text_np.dtype}", file=sys.stderr, flush=True)
             out_text = pb_utils.Tensor("generated_text", text_np)
-            print(f"[DEBUG] out_text tensor created ok", file=sys.stderr, flush=True)
             conf_np = np.array([conf], dtype=np.float32)
             out_conf = pb_utils.Tensor("confidence", conf_np)
-            print(f"[DEBUG] out_conf tensor created ok", file=sys.stderr, flush=True)
-            resp = pb_utils.InferenceResponse(output_tensors=[out_text, out_conf])
-            print(f"[DEBUG] InferenceResponse created ok", file=sys.stderr, flush=True)
-            return resp
+            return pb_utils.InferenceResponse(output_tensors=[out_text, out_conf])
         return result
 
     # "" SDK inference path """"""""""""""""""""""""""""""""""""""""""""""""""
 
-    def _sdk_inference(self, image_ref, output_format, include_coords, precision):
-        """Use official glmocr SDK -- PP-DocLayout + parallel OCR out of the box."""
-        result_obj   = self.sdk_parser.parse(image_ref)
-        raw_elements = result_obj.json_result if hasattr(result_obj, "json_result") else []
-        markdown     = result_obj.markdown     if hasattr(result_obj, "markdown")     else ""
-
-        elements = [
-            _make_element(
-                index=i,
-                label=el.get("label", "text"),
-                content=el.get("content", ""),
-                bbox_2d=el.get("bbox_2d"),
-                confidence=el.get("confidence", 0.92),
-            )
-            for i, el in enumerate(raw_elements)
-        ]
-        confs    = [e["confidence"] for e in elements]
-        avg_conf = round(sum(confs) / len(confs), 4) if confs else 0.92
-        return {
-            "pages":      [{"page": 1, "elements": elements}],
-            "markdown":   markdown,
-            "model":      "zai-org/GLM-OCR",
-            "mode":       "sdk",
-            "precision":  precision,
-            "confidence": avg_conf,
-            "usage":      {"prompt_tokens": 0, "completion_tokens": 0},
-        }
-
     # "" Native two-stage inference """"""""""""""""""""""""""""""""""""""""""
 
-    def _native_inference(
-        self, image_ref, prompt_override, output_format,
-        include_coords, include_word_conf, max_tokens, precision,
-    ):
+    def _create_generation_kwargs(self, precision: str, max_new_tokens: int) -> dict:
         """
-        Two-stage pipeline:
-          1. PP-DocLayout-V3  '  region bboxes + labels
-          2. GLM-OCR          '  text/table/formula for each region
+        Create generation parameters based on precision mode.
+        
+        Args:
+            precision: Precision mode ("normal", "high", or "precision")
+            max_new_tokens: Maximum number of tokens to generate
+        
+        Returns:
+            Dictionary of generation parameters
+        """
+        gen_kwargs = {
+            "max_new_tokens": max_new_tokens,
+            "do_sample": False,
+            "repetition_penalty": 1.05 if precision not in ("high", "precision") else 1.15,
+        }
+        if precision in ("high", "precision"):
+            gen_kwargs["length_penalty"] = 1.0
+        return gen_kwargs
+
+    def _native_inference(
+        self, 
+        image_ref: str, 
+        prompt_override: str, 
+        output_format: str,
+        include_coords: bool, 
+        include_word_conf: bool, 
+        max_tokens: int, 
+        precision: str,
+    ) -> dict:
+        """
+        Two-stage pipeline: PP-DocLayout-V3 → GLM-OCR.
+        
+        Args:
+            image_ref: Image file path or data URI
+            prompt_override: Custom prompt (overrides default task prompts)
+            output_format: Output format type
+            include_coords: Whether to include bounding box coordinates
+            include_word_conf: Whether to include word-level confidence
+            max_tokens: Maximum tokens to generate
+            precision: Precision mode
+        
+        Returns:
+            Result dict with pages, markdown, confidence, and usage
+        
         Falls back to single full-page pass when layout engine is absent.
         """
         img = _load_image(image_ref)
@@ -489,7 +781,8 @@ class TritonPythonModel:
         elements: list = []
         total_pt = total_ct = 0
 
-        if self.layout_engine is not None and include_coords:
+        if self.layout_engine is not None and include_coords and not prompt_override:
+            # Use layout detection with task-specific prompts only when no custom prompt provided
             regions = self._detect_layout(img)
             for i, region in enumerate(regions):
                 bbox   = region["bbox"]          # [x1, y1, x2, y2]
@@ -502,6 +795,7 @@ class TritonPythonModel:
                 elements.append(_make_element(i, label, content, list(map(int, bbox)),
                                               region.get("confidence", 0.90)))
         else:
+            # Use custom prompt if provided, otherwise use format-based prompt
             prompt  = prompt_override if prompt_override else _format_to_prompt(output_format)
             content, pt, ct = self._run_glm_ocr(img, prompt, max_tokens, precision, output_format)
             total_pt += pt; total_ct += ct
@@ -516,8 +810,16 @@ class TritonPythonModel:
         return _assemble_result(elements, page_w, page_h, "zai-org/GLM-OCR",
                                 "native", precision, total_pt, total_ct, output_format)
 
-    def _detect_layout(self, img):
-        """Run PP-DocLayout-V3 ' list of region dicts sorted in reading order."""
+    def _detect_layout(self, img) -> list[dict]:
+        """
+        Run PP-DocLayout-V3 to detect document regions.
+        
+        Args:
+            img: PIL Image object
+        
+        Returns:
+            List of region dicts sorted in reading order, each with bbox, label, and confidence
+        """
         img_np  = np.array(img.convert("RGB"))
         results = self.layout_engine(img_np)
         regions = []
@@ -533,11 +835,21 @@ class TritonPythonModel:
         regions.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
         return regions
 
-    def _run_glm_ocr(self, img, prompt, max_new_tokens, precision, output_format):
+    def _run_glm_ocr(self, img, prompt: str, max_new_tokens: int, precision: str, output_format: str) -> tuple[str, int, int]:
         """
         Single GLM-OCR inference call.
-        Returns (content, prompt_tokens, completion_tokens).
-        Precision mode: do_sample=False + stronger repetition_penalty.
+        
+        Args:
+            img: PIL Image object
+            prompt: Prompt text for the model
+            max_new_tokens: Maximum number of tokens to generate
+            precision: Precision mode ("normal", "high", or "precision")
+                      - Affects repetition_penalty (1.05 for normal, 1.15 for high/precision)
+                      - High/precision modes also set length_penalty=1.0
+            output_format: Output format (used for logging)
+        
+        Returns:
+            Tuple of (content, prompt_tokens, completion_tokens)
         """
         messages = [{
             "role": "user",
@@ -549,13 +861,11 @@ class TritonPythonModel:
         ).to(self.model.device)
         inputs.pop("token_type_ids", None)
 
-        gen_kwargs: dict = {
-            "max_new_tokens":     max_new_tokens,
-            "do_sample":          False,
-            "repetition_penalty": 1.05 if precision not in ("high", "precision") else 1.15,
-        }
-        if precision in ("high", "precision"):
-            gen_kwargs["length_penalty"] = 1.0
+        # Generation parameters based on precision mode (see _create_generation_kwargs)
+        # - do_sample=False for deterministic output
+        # - repetition_penalty: 1.05 (normal) or 1.15 (high/precision)
+        # - length_penalty: 1.0 (high/precision only)
+        gen_kwargs = self._create_generation_kwargs(precision, max_new_tokens)
 
         with torch.no_grad():
             outputs = self.model.generate(**inputs, **gen_kwargs)
@@ -568,8 +878,17 @@ class TritonPythonModel:
 
         return text, prompt_len, int(new_ids.shape[1])
 
-    def _enrich_word_confidence(self, elements, img):
-        """Precision-mode: word-level recognition pass for each detected region."""
+    def _enrich_word_confidence(self, elements: list[dict], img) -> list[dict]:
+        """
+        Precision-mode: word-level recognition pass for each detected region.
+        
+        Args:
+            elements: List of element dicts with bbox_2d
+            img: PIL Image object
+        
+        Returns:
+            Updated elements list with word-level confidence data
+        """
         for el in elements:
             bbox = el.get("bbox_2d")
             if not bbox:
@@ -639,22 +958,37 @@ class _MockEngine:
 
     @classmethod
     def _json_format(cls, coords):
-        payload = {
+        # Return flat structure as per schema
+        payload: JsonOutputSchema = {
             "document_type": "invoice",
             "fields": {
-                "invoice_number": cls._fv("INV-2026-0042", [280, 100, 460, 125], 0.97, coords),
-                "date":           cls._fv("2026-02-25",    [280, 130, 430, 155], 0.96, coords),
-                "vendor":         cls._fv("Acme Corp",     [280, 160, 420, 185], 0.95, coords),
-                "bill_to":        cls._fv("Customer Inc.", [280, 210, 460, 235], 0.94, coords),
-                "subtotal":       cls._fv("$1,234.56",     [400, 440, 520, 460], 0.97, coords),
-                "tax":            cls._fv("$123.46",       [400, 465, 500, 485], 0.96, coords),
-                "total_amount":   cls._fv("$1,358.02",     [400, 495, 530, 520], 0.98, coords),
+                "invoice_number": "INV-2026-0042",
+                "date": "2026-02-25",
+                "vendor": "Acme Corp",
+                "bill_to": "Customer Inc.",
+                "subtotal": "$1,234.56",
+                "tax": "$123.46",
+                "total_amount": "$1,358.02",
             },
             "line_items": [
-                cls._line_item("Widget A", 10, "$100.00", "$1,000.00", [100, 330, 540, 355], coords),
-                cls._line_item("Widget B",  5,  "$46.91",   "$234.56", [100, 358, 540, 383], coords),
+                {"description": "Widget A", "quantity": 10, "unit_price": "$100.00", "total": "$1,000.00"},
+                {"description": "Widget B", "quantity": 5, "unit_price": "$46.91", "total": "$234.56"},
             ],
         }
+        # Add coordinates at top level if requested (not inside fields)
+        if coords:
+            payload["_coordinates"] = {
+                "invoice_number": [280, 100, 460, 125],
+                "date": [280, 130, 430, 155],
+                "vendor": [280, 160, 420, 185],
+                "bill_to": [280, 210, 460, 235],
+                "subtotal": [400, 440, 520, 460],
+                "tax": [400, 465, 500, 485],
+                "total_amount": [400, 495, 530, 520],
+            }
+            payload["line_items"][0]["bbox_2d"] = [100, 330, 540, 355]
+            payload["line_items"][1]["bbox_2d"] = [100, 358, 540, 383]
+        
         return [_make_element(0, "json", json.dumps(payload, indent=2),
                               [80, 80, 540, 530] if coords else None, 0.96)]
 
@@ -671,69 +1005,119 @@ class _MockEngine:
 
     @classmethod
     def _table(cls, coords):
-        payload = [{
+        # Return structured table object as per schema (list of tables)
+        table: TableOutputSchema = {
             "table_id": 1,
-            "title":   "Invoice Line Items",
+            "title": "Invoice Line Items",
             "headers": ["Description", "Qty", "Unit Price", "Total"],
-            "rows":    [["Widget A", "10", "$100.00", "$1,000.00"],
-                        ["Widget B",  "5",  "$46.91",   "$234.56"]],
-            "footer":  ["", "", "Subtotal", "$1,234.56"],
-            **({"bbox_2d": [80, 300, 540, 420],
-                "cell_coordinates": {
-                    "header_row": [[80, 300, 215, 325], [215, 300, 265, 325],
-                                   [265, 300, 405, 325], [405, 300, 540, 325]],
-                    "data_rows":  [[[80, 330, 215, 355], [215, 330, 265, 355],
-                                    [265, 330, 405, 355], [405, 330, 540, 355]],
-                                   [[80, 358, 215, 383], [215, 358, 265, 383],
-                                    [265, 358, 405, 383], [405, 358, 540, 383]]],
-                }} if coords else {}),
-        }]
+            "rows": [
+                ["Widget A", "10", "$100.00", "$1,000.00"],
+                ["Widget B", "5", "$46.91", "$234.56"]
+            ],
+            "footer": ["", "", "Subtotal", "$1,234.56"],
+        }
+        if coords:
+            table["bbox_2d"] = [80, 300, 540, 420]
+            table["cell_coordinates"] = {
+                "header_row": [
+                    [80, 300, 215, 325], [215, 300, 265, 325],
+                    [265, 300, 405, 325], [405, 300, 540, 325]
+                ],
+                "data_rows": [
+                    [[80, 330, 215, 355], [215, 330, 265, 355],
+                     [265, 330, 405, 355], [405, 330, 540, 355]],
+                    [[80, 358, 215, 383], [215, 358, 265, 383],
+                     [265, 358, 405, 383], [405, 358, 540, 383]]
+                ],
+            }
+        
+        payload = [table]  # Return as list of tables
         return [_make_element(0, "table", json.dumps(payload, indent=2),
                               [80, 300, 540, 420] if coords else None, 0.97)]
 
     @classmethod
     def _key_value(cls, coords):
-        kv = {
-            "invoice_number": cls._fv("INV-2026-0042", [280, 100, 460, 125], 0.97, coords),
-            "date":           cls._fv("2026-02-25",    [280, 130, 430, 155], 0.96, coords),
-            "vendor":         cls._fv("Acme Corp",     [280, 160, 420, 185], 0.95, coords),
-            "bill_to":        cls._fv("Customer Inc.", [280, 210, 460, 235], 0.94, coords),
-            "subtotal":       cls._fv("$1,234.56",     [400, 440, 520, 460], 0.97, coords),
-            "tax":            cls._fv("$123.46",       [400, 465, 500, 485], 0.96, coords),
-            "total_amount":   cls._fv("$1,358.02",     [400, 495, 530, 520], 0.98, coords),
-            "payment_terms":  cls._fv("Net 30",        [280, 525, 380, 545], 0.92, coords),
+        # Return flat dict with string values (coordinates separate if needed)
+        kv: KeyValueOutputSchema = {
+            "invoice_number": "INV-2026-0042",
+            "date": "2026-02-25",
+            "vendor": "Acme Corp",
+            "bill_to": "Customer Inc.",
+            "subtotal": "$1,234.56",
+            "tax": "$123.46",
+            "total_amount": "$1,358.02",
+            "payment_terms": "Net 30",
         }
+        # Add coordinates as separate field if requested
+        if coords:
+            kv["_coordinates"] = {
+                "invoice_number": [280, 100, 460, 125],
+                "date": [280, 130, 430, 155],
+                "vendor": [280, 160, 420, 185],
+                "bill_to": [280, 210, 460, 235],
+                "subtotal": [400, 440, 520, 460],
+                "tax": [400, 465, 500, 485],
+                "total_amount": [400, 495, 530, 520],
+                "payment_terms": [280, 525, 380, 545],
+            }
+            kv["_confidence"] = {
+                "invoice_number": 0.97,
+                "date": 0.96,
+                "vendor": 0.95,
+                "bill_to": 0.94,
+                "subtotal": 0.97,
+                "tax": 0.96,
+                "total_amount": 0.98,
+                "payment_terms": 0.92,
+            }
+        
         return [_make_element(0, "key_value", json.dumps(kv, indent=2),
                               [80, 80, 540, 545] if coords else None, 0.96)]
 
     @classmethod
     def _structured(cls, coords):
-        s = {
+        # Return complete structured output as per schema
+        s: StructuredOutputSchema = {
             "document_type": "invoice",
             "language": "en",
             "page_count": 1,
             "raw_text": "INVOICE\nInvoice #: INV-2026-0042\nDate: 2026-02-25\nTotal Due: $1,358.02",
             "fields": {
-                "invoice_number": cls._fv("INV-2026-0042", [280, 100, 460, 125], 0.97, coords),
-                "date":           cls._fv("2026-02-25",    [280, 130, 430, 155], 0.96, coords),
-                "total_amount":   cls._fv("$1,358.02",     [400, 495, 530, 520], 0.98, coords),
+                "invoice_number": "INV-2026-0042",
+                "date": "2026-02-25",
+                "total_amount": "$1,358.02",
             },
             "tables": [{
                 "headers": ["Description", "Qty", "Unit Price", "Total"],
-                "rows":    [["Widget A", "10", "$100.00", "$1,000.00"],
-                            ["Widget B",  "5",  "$46.91",   "$234.56"]],
-                **({"bbox_2d": [80, 300, 540, 420],
-                    "cell_coordinates": {
-                        "header_row": [[80, 300, 215, 325], [215, 300, 265, 325],
-                                       [265, 300, 405, 325], [405, 300, 540, 325]],
-                        "data_rows":  [[[80, 330, 215, 355], [215, 330, 265, 355],
-                                        [265, 330, 405, 355], [405, 330, 540, 355]],
-                                       [[80, 358, 215, 383], [215, 358, 265, 383],
-                                        [265, 358, 405, 383], [405, 358, 540, 383]]],
-                    }} if coords else {}),
+                "rows": [
+                    ["Widget A", "10", "$100.00", "$1,000.00"],
+                    ["Widget B", "5", "$46.91", "$234.56"]
+                ],
             }],
             "handwritten_sections": [],
         }
+        
+        # Add coordinates at top level if requested (not inside fields)
+        if coords:
+            s["_coordinates"] = {
+                "invoice_number": [280, 100, 460, 125],
+                "date": [280, 130, 430, 155],
+                "total_amount": [400, 495, 530, 520],
+            }
+            s["tables"][0]["bbox_2d"] = [80, 300, 540, 420]
+            s["tables"][0]["cell_coordinates"] = {
+                "header_row": [
+                    [80, 300, 215, 325], [215, 300, 265, 325],
+                    [265, 300, 405, 325], [405, 300, 540, 325]
+                ],
+                "data_rows": [
+                    [[80, 330, 215, 355], [215, 330, 265, 355],
+                     [265, 330, 405, 355], [405, 330, 540, 355]],
+                    [[80, 358, 215, 383], [215, 358, 265, 383],
+                     [265, 358, 405, 383], [405, 358, 540, 383]]
+                ],
+            }
+        
         return [_make_element(0, "structured", json.dumps(s, indent=2),
                               [80, 50, 540, 545] if coords else None, 0.96)]
 
