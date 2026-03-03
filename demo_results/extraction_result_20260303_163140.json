@@ -1,0 +1,273 @@
+{
+  "job_id": "demo-20260303-163140",
+  "model": "glm-ocr-v2",
+  "created_at": "2026-03-03T16:31:40.396719",
+  "processing_time_ms": 3200,
+  "document_confidence": 0.95,
+  "page_count": 1,
+  "filename": "Mr.P.Vaidyanathan Rs.4,95,000.pdf",
+  "usage": {
+    "prompt_tokens": 45,
+    "completion_tokens": 512,
+    "total_tokens": 557
+  },
+  "options": {
+    "document": "C:\\Users\\MONISH RAJ T\\OneDrive\\Desktop\\IDLE\\testfiles\\Mr.P.Vaidyanathan Rs.4,95,000.pdf",
+    "output_formats": [
+      "json",
+      "table"
+    ],
+    "include_coordinates": true,
+    "include_word_confidence": false,
+    "granularity": "block"
+  },
+  "result": {
+    "json": {
+      "document_type": "invoice",
+      "fields": {
+        "invoice_number": {
+          "value": "INV-2026-0042",
+          "bbox": [
+            100,
+            100,
+            400,
+            25
+          ],
+          "confidence": 0.91
+        },
+        "date": {
+          "value": "2026-02-25",
+          "bbox": [
+            100,
+            130,
+            400,
+            25
+          ],
+          "confidence": 0.94
+        },
+        "vendor": {
+          "value": "Acme Corp",
+          "bbox": [
+            100,
+            160,
+            400,
+            25
+          ],
+          "confidence": 0.96
+        },
+        "bill_to": {
+          "value": "Customer Inc.",
+          "bbox": [
+            100,
+            190,
+            400,
+            25
+          ],
+          "confidence": 0.97
+        },
+        "address": {
+          "value": "123 Business Ave, Suite 456, New York, NY 10001",
+          "bbox": [
+            100,
+            220,
+            400,
+            25
+          ],
+          "confidence": 0.99
+        },
+        "subtotal": {
+          "value": "$1,234.56",
+          "bbox": [
+            100,
+            250,
+            400,
+            25
+          ],
+          "confidence": 0.92
+        },
+        "tax": {
+          "value": "$123.46",
+          "bbox": [
+            100,
+            280,
+            400,
+            25
+          ],
+          "confidence": 0.91
+        },
+        "total_amount": {
+          "value": "$1,358.02",
+          "bbox": [
+            100,
+            310,
+            400,
+            25
+          ],
+          "confidence": 0.99
+        },
+        "payment_terms": {
+          "value": "Net 30",
+          "bbox": [
+            100,
+            340,
+            400,
+            25
+          ],
+          "confidence": 0.98
+        },
+        "due_date": {
+          "value": "2026-03-27",
+          "bbox": [
+            100,
+            370,
+            400,
+            25
+          ],
+          "confidence": 0.98
+        }
+      },
+      "line_items": [
+        {
+          "description": "Widget A",
+          "quantity": 10,
+          "unit_price": "$100.00",
+          "total": "$1,000.00",
+          "bbox": [
+            100,
+            400,
+            500,
+            25
+          ],
+          "confidence": 0.93
+        },
+        {
+          "description": "Widget B",
+          "quantity": 5,
+          "unit_price": "$46.91",
+          "total": "$234.56",
+          "bbox": [
+            100,
+            430,
+            500,
+            25
+          ],
+          "confidence": 0.93
+        }
+      ]
+    },
+    "tables": [
+      {
+        "table_id": 1,
+        "title": "Line Items",
+        "headers": [
+          "Description",
+          "Qty",
+          "Unit Price",
+          "Total"
+        ],
+        "rows": [
+          [
+            "Widget A",
+            "10",
+            "$100.00",
+            "$1,000.00"
+          ],
+          [
+            "Widget B",
+            "5",
+            "$46.91",
+            "$234.56"
+          ]
+        ],
+        "bbox": [
+          80,
+          280,
+          540,
+          120
+        ],
+        "cell_coordinates": {
+          "header_row": [
+            [
+              80,
+              280,
+              135,
+              25
+            ],
+            [
+              215,
+              280,
+              50,
+              25
+            ],
+            [
+              265,
+              280,
+              100,
+              25
+            ],
+            [
+              365,
+              280,
+              100,
+              25
+            ]
+          ],
+          "data_rows": [
+            [
+              [
+                80,
+                310,
+                135,
+                25
+              ],
+              [
+                215,
+                310,
+                50,
+                25
+              ],
+              [
+                265,
+                310,
+                100,
+                25
+              ],
+              [
+                365,
+                310,
+                100,
+                25
+              ]
+            ],
+            [
+              [
+                80,
+                340,
+                135,
+                25
+              ],
+              [
+                215,
+                340,
+                50,
+                25
+              ],
+              [
+                265,
+                340,
+                100,
+                25
+              ],
+              [
+                365,
+                340,
+                100,
+                25
+              ]
+            ]
+          ]
+        }
+      }
+    ]
+  }
+}

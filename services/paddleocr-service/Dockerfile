@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsm6 \
     libxext6 \
     libxrender-dev \
-    libgl1-mesa-glx \
+    libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Stage 2: Build stage
@@ -34,7 +34,7 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy requirements file
-COPY requirements.txt /tmp/requirements.txt
+COPY services/paddleocr-service/requirements.txt /tmp/requirements.txt
 
 # Install Python dependencies
 RUN pip install --upgrade pip setuptools wheel && \
@@ -56,7 +56,7 @@ RUN useradd -m -u 1000 -s /bin/bash appuser && \
 WORKDIR /app
 
 # Copy application code
-COPY --chown=appuser:appuser app/ /app/app/
+COPY --chown=appuser:appuser services/paddleocr-service/app/ /app/app/
 
 # Switch to non-root user
 USER appuser

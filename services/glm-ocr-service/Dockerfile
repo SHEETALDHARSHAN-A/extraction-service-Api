@@ -9,24 +9,32 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Install Python and dependencies
 RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3.11-dev \
-    python3-pip \
+    python3.10 \
+    python3.10-dev \
+    python3.10-venv \
     git \
     wget \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Set python3.10 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+
+# Install pip using get-pip.py to get the latest version
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3
 
 # Create app directory
 WORKDIR /app
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY services/glm-ocr-service/requirements.txt .
 
-# Install Python dependencies
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Install Python dependencies with upgraded pip
+RUN python3 -m pip install --upgrade pip setuptools wheel && \
+    python3 -m pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY app/ ./app/
+COPY services/glm-ocr-service/app/ ./app/
 
 # Create non-root user
 RUN useradd -m -u 1000 glmocr && \

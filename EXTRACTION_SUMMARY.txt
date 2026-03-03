@@ -1,0 +1,171 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║              DOCUMENT EXTRACTION - COMPLETE GUIDE                        ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+
+📁 YOU NOW HAVE TWO EXTRACTION METHODS:
+═══════════════════════════════════════════════════════════════════════════
+
+  1. DEMO (Mock Data) - For presentations
+     File: demo_interactive.py
+     Use: Show your manager the API format
+     
+  2. REAL (Actual Extraction) - For real documents
+     File: real_extraction.py
+     Use: Extract data from your actual PDFs
+
+
+🎯 WHICH ONE TO USE?
+═══════════════════════════════════════════════════════════════════════════
+
+  FOR MANAGER DEMO (Recommended):
+    ✓ Use: demo_interactive.py
+    ✓ Why: Fast, reliable, no setup
+    ✓ Shows: Professional output format
+    ✓ Command: python demo_interactive.py --document file.pdf --formats json
+
+  FOR REAL EXTRACTION:
+    ✓ Use: real_extraction.py
+    ✓ Why: Actual OCR processing
+    ✓ Shows: Real data from your PDFs
+    ✓ Requires: Services running (Docker)
+
+
+🚀 QUICK START - REAL EXTRACTION:
+═══════════════════════════════════════════════════════════════════════════
+
+  STEP 1: Start services
+    start_services.bat
+    (or: docker-compose -f docker/docker-compose.yml up -d)
+
+  STEP 2: Wait 30-60 seconds for services to start
+
+  STEP 3: Extract your document
+    python real_extraction.py --document "testfiles\your_file.pdf" --formats json
+
+
+📋 REAL EXTRACTION COMMANDS:
+═══════════════════════════════════════════════════════════════════════════
+
+  Basic:
+    python real_extraction.py --document "testfiles\invoice.pdf"
+
+  With coordinates:
+    python real_extraction.py --document "testfiles\invoice.pdf" --formats json --coordinates yes
+
+  Specific fields:
+    python real_extraction.py --document "testfiles\invoice.pdf" --formats json --fields invoice_number,date,total
+
+  Your PDF:
+    python real_extraction.py --document "testfiles\Mr.P.Vaidyanathan Rs.4,95,000.pdf" --formats json,table --coordinates yes
+
+
+🔧 STARTING SERVICES:
+═══════════════════════════════════════════════════════════════════════════
+
+  Windows:
+    start_services.bat
+
+  Manual:
+    docker-compose -f docker/docker-compose.yml up -d
+
+  Check status:
+    curl http://localhost:8000/health
+
+  View logs:
+    docker-compose -f docker/docker-compose.yml logs -f
+
+  Stop services:
+    docker-compose -f docker/docker-compose.yml down
+
+
+📊 OUTPUT COMPARISON:
+═══════════════════════════════════════════════════════════════════════════
+
+  DEMO OUTPUT (demo_interactive.py):
+    Location: demo_results/
+    Content: Sample data (not from your PDF)
+    Use: Show format to manager
+
+  REAL OUTPUT (real_extraction.py):
+    Location: extraction_results/
+    Content: Actual data from your PDF
+    Use: Real document processing
+
+
+🆚 DEMO vs REAL:
+═══════════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────┬──────────────────┬──────────────────┐
+  │ Feature             │ Demo Script      │ Real Extraction  │
+  ├─────────────────────┼──────────────────┼──────────────────┤
+  │ Setup Required      │ None             │ Docker services  │
+  │ Processing Time     │ Instant          │ 30-60 seconds    │
+  │ Data Source         │ Sample data      │ Your actual PDF  │
+  │ Accuracy            │ N/A              │ Real OCR results │
+  │ Best For            │ Presentations    │ Real processing  │
+  │ Reliability         │ 100%             │ Depends on setup │
+  └─────────────────────┴──────────────────┴──────────────────┘
+
+
+🎬 MANAGER DEMO RECOMMENDATION:
+═══════════════════════════════════════════════════════════════════════════
+
+  OPTION A: Demo Script (Safer)
+    ✓ No technical issues
+    ✓ Consistent results
+    ✓ Professional output
+    Command: python demo_interactive.py --document file.pdf --formats json
+
+  OPTION B: Real Extraction (More Impressive)
+    ✓ Shows actual processing
+    ✓ Real data extraction
+    ⚠ Requires services running
+    ⚠ Can have technical issues
+    Command: python real_extraction.py --document "testfiles\invoice.pdf" --formats json
+
+
+🆘 TROUBLESHOOTING:
+═══════════════════════════════════════════════════════════════════════════
+
+  "API is not available":
+    → Start services: start_services.bat
+    → Wait 30-60 seconds
+    → Check: curl http://localhost:8000/health
+
+  "File not found":
+    → Use quotes: --document "testfiles\file with spaces.pdf"
+
+  "Upload failed":
+    → Check services are running
+    → Check API key: --api-key tp-proj-dev-key-123
+
+  Job stuck:
+    → Wait longer (large PDFs take time)
+    → Check logs: docker-compose -f docker/docker-compose.yml logs -f
+
+
+📚 DOCUMENTATION:
+═══════════════════════════════════════════════════════════════════════════
+
+  REAL_EXTRACTION_GUIDE.md      Complete real extraction guide
+  START_HERE.txt                Demo script quick start
+  README_DEMO.md                Demo script reference
+  INTERACTIVE_DEMO_GUIDE.md     Demo script full guide
+
+
+✅ READY TO GO:
+═══════════════════════════════════════════════════════════════════════════
+
+  For Demo (Recommended):
+    python demo_interactive.py --document file.pdf --formats json
+
+  For Real Extraction:
+    1. start_services.bat
+    2. Wait 30-60 seconds
+    3. python real_extraction.py --document "testfiles\your_file.pdf" --formats json
+
+
+═══════════════════════════════════════════════════════════════════════════
+Good luck with your extraction! 🚀
+═══════════════════════════════════════════════════════════════════════════

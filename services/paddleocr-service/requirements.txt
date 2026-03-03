@@ -1,8 +1,8 @@
 # PaddleOCR Layout Detection Service Dependencies
 
 # Deep Learning Framework
-paddlepaddle==2.6.0  # CPU version
-# paddlepaddle-gpu==2.6.0  # GPU version (uncomment if using GPU)
+paddlepaddle==2.6.2  # CPU version (2.6.0 no longer available)
+# paddlepaddle-gpu==2.6.2  # GPU version (uncomment if using GPU)
 
 # OCR Library
 paddleocr>=2.7.0
