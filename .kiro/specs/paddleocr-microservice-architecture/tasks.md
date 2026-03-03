@@ -85,228 +85,228 @@
 
 ## Task 2: GLM-OCR Service Modifications
 
-- [ ] 2.1 Review existing GLM-OCR service structure
-  - [ ] 2.1.1 Examine current `/jobs/upload` endpoint
-  - [ ] 2.1.2 Identify existing models and prompts
-  - [ ] 2.1.3 Document current request/response formats
+- [x] 2.1 Review existing GLM-OCR service structure
+  - [x] 2.1.1 Examine current `/jobs/upload` endpoint
+  - [x] 2.1.2 Identify existing models and prompts
+  - [x] 2.1.3 Document current request/response formats
 
-- [ ] 2.2 Implement /extract-region endpoint
-  - [ ] 2.2.1 Add `POST /extract-region` endpoint
-  - [ ] 2.2.2 Create request model for single region
-  - [ ] 2.2.3 Create response model with content and confidence
-  - [ ] 2.2.4 Implement region-type-specific prompts
-  - [ ] 2.2.5 Add processing time tracking
-  - [ ] 2.2.6 Add token usage tracking
+- [x] 2.2 Implement /extract-region endpoint
+  - [x] 2.2.1 Add `POST /extract-region` endpoint
+  - [x] 2.2.2 Create request model for single region
+  - [x] 2.2.3 Create response model with content and confidence
+  - [x] 2.2.4 Implement region-type-specific prompts
+  - [x] 2.2.5 Add processing time tracking
+  - [x] 2.2.6 Add token usage tracking
 
-- [ ] 2.3 Implement /extract-regions-batch endpoint
-  - [ ] 2.3.1 Add `POST /extract-regions-batch` endpoint
-  - [ ] 2.3.2 Create batch request model
-  - [ ] 2.3.3 Create batch response model
-  - [ ] 2.3.4 Implement parallel region processing
-  - [ ] 2.3.5 Add per-region error handling
-  - [ ] 2.3.6 Track total processing time
+- [x] 2.3 Implement /extract-regions-batch endpoint
+  - [x] 2.3.1 Add `POST /extract-regions-batch` endpoint
+  - [x] 2.3.2 Create batch request model
+  - [x] 2.3.3 Create batch response model
+  - [x] 2.3.4 Implement parallel region processing
+  - [x] 2.3.5 Add per-region error handling
+  - [x] 2.3.6 Track total processing time
 
-- [ ] 2.4 Implement region type prompt mapping
-  - [ ] 2.4.1 Create prompt configuration
-  - [ ] 2.4.2 Map region types to prompts:
+- [x] 2.4 Implement region type prompt mapping
+  - [x] 2.4.1 Create prompt configuration
+  - [x] 2.4.2 Map region types to prompts:
     - [ ] text → "Text Recognition:"
     - [ ] table → "Table Recognition:"
     - [ ] formula → "Formula Recognition:"
     - [ ] title → "Title Recognition:"
     - [ ] figure → "Figure Recognition:"
-  - [ ] 2.4.3 Support custom prompts
+  - [x] 2.4.3 Support custom prompts
 
-- [ ] 2.5 Add input validation
-  - [ ] 2.5.1 Validate base64 image format
-  - [ ] 2.5.2 Validate region type
-  - [ ] 2.5.3 Validate prompt length
-  - [ ] 2.5.4 Validate max_tokens parameter
+- [x] 2.5 Add input validation
+  - [x] 2.5.1 Validate base64 image format
+  - [x] 2.5.2 Validate region type
+  - [x] 2.5.3 Validate prompt length
+  - [x] 2.5.4 Validate max_tokens parameter
 
-- [ ] 2.6 Update existing endpoints
-  - [ ] 2.6.1 Ensure `/jobs/upload` maintains backward compatibility
-  - [ ] 2.6.2 Add option to enable layout detection mode
-  - [ ] 2.6.3 Add response format option for per-field bboxes
+- [x] 2.6 Update existing endpoints
+  - [x] 2.6.1 Ensure `/jobs/upload` maintains backward compatibility
+  - [x] 2.6.2 Add option to enable layout detection mode
+  - [x] 2.6.3 Add response format option for per-field bboxes
 
-- [ ] 2.7 Add logging and monitoring
-  - [ ] 2.7.1 Implement structured JSON logging
-  - [ ] 2.7.2 Add request ID tracking
-  - [ ] 2.7.3 Log model inference time
-  - [ ] 2.7.4 Log token usage
+- [x] 2.7 Add logging and monitoring
+  - [x] 2.7.1 Implement structured JSON logging
+  - [x] 2.7.2 Add request ID tracking
+  - [x] 2.7.3 Log model inference time
+  - [x] 2.7.4 Log token usage
 
-- [ ] 2.8 Update Docker configuration
-  - [ ] 2.8.1 Update existing Dockerfile
-  - [ ] 2.8.2 Add new endpoint handlers
-  - [ ] 2.8.3 Update health check endpoint
-  - [ ] 2.8.4 Update environment variables
+- [x] 2.8 Update Docker configuration
+  - [x] 2.8.1 Update existing Dockerfile
+  - [x] 2.8.2 Add new endpoint handlers
+  - [x] 2.8.3 Update health check endpoint
+  - [x] 2.8.4 Update environment variables
 
-- [ ] 2.9 Write unit tests
-  - [ ] 2.9.1 Create tests for new endpoints
-  - [ ] 2.9.2 Test prompt mapping
-  - [ ] 2.9.3 Test input validation
-  - [ ] 2.9.4 Test batch processing
+- [x] 2.9 Write unit tests
+  - [x] 2.9.1 Create tests for new endpoints
+  - [x] 2.9.2 Test prompt mapping
+  - [x] 2.9.3 Test input validation
+  - [x] 2.9.4 Test batch processing
 
-- [ ] 2.10 Write integration tests
-  - [ ] 2.10.1 Test `/extract-region` with real model
-  - [ ] 2.10.2 Test `/extract-regions-batch` with multiple regions
-  - [ ] 2.10.3 Test backward compatibility with `/jobs/upload`
+- [x] 2.10 Write integration tests
+  - [x] 2.10.1 Test `/extract-region` with real model
+  - [x] 2.10.2 Test `/extract-regions-batch` with multiple regions
+  - [x] 2.10.3 Test backward compatibility with `/jobs/upload`
 
 ## Task 3: API Gateway Orchestration Enhancements
 
-- [ ] 3.1 Review existing API Gateway structure
-  - [ ] 3.1.1 Examine current job processing flow
-  - [ ] 3.1.2 Identify existing service URLs and endpoints
-  - [ ] 3.1.3 Document current response formats
+- [x] 3.1 Review existing API Gateway structure
+  - [x] 3.1.1 Examine current job processing flow
+  - [x] 3.1.2 Identify existing service URLs and endpoints
+  - [x] 3.1.3 Document current response formats
 
-- [ ] 3.2 Implement layout detection orchestration
-  - [ ] 3.2.1 Add PaddleOCR service client
-  - [ ] 3.2.2 Implement layout detection request
-  - [ ] 3.2.3 Handle layout detection response
-  - [ ] 3.2.4 Add timeout handling (30s default)
-  - [ ] 3.2.5 Add retry logic (3 attempts, exponential backoff)
+- [x] 3.2 Implement layout detection orchestration
+  - [x] 3.2.1 Add PaddleOCR service client
+  - [x] 3.2.2 Implement layout detection request
+  - [x] 3.2.3 Handle layout detection response
+  - [x] 3.2.4 Add timeout handling (30s default)
+  - [x] 3.2.5 Add retry logic (3 attempts, exponential backoff)
 
-- [ ] 3.3 Implement image cropping into regions
-  - [ ] 3.3.1 Create image cropping utility
-  - [ ] 3.3.2 Implement bbox-based cropping
-  - [ ] 3.3.3 Add padding option for regions
-  - [ ] 3.3.4 Handle edge cases (bbox outside image)
-  - [ ] 3.3.5 Convert cropped images to base64
+- [x] 3.3 Implement image cropping into regions
+  - [x] 3.3.1 Create image cropping utility
+  - [x] 3.3.2 Implement bbox-based cropping
+  - [x] 3.3.3 Add padding option for regions
+  - [x] 3.3.4 Handle edge cases (bbox outside image)
+  - [x] 3.3.5 Convert cropped images to base64
 
-- [ ] 3.4 Implement region content extraction
-  - [ ] 3.4.1 Add GLM-OCR service client
-  - [ ] 3.4.2 Implement batch region processing
-  - [ ] 3.4.3 Map region types to prompts
-  - [ ] 3.4.4 Handle partial failures
-  - [ ] 3.4.5 Add parallel processing option
+- [x] 3.4 Implement region content extraction
+  - [x] 3.4.1 Add GLM-OCR service client
+  - [x] 3.4.2 Implement batch region processing
+  - [x] 3.4.3 Map region types to prompts
+  - [x] 3.4.4 Handle partial failures
+  - [x] 3.4.5 Add parallel processing option
 
-- [ ] 3.5 Implement result assembly
-  - [ ] 3.5.1 Create unified result model
-  - [ ] 3.5.2 Assemble per-field bboxes
-  - [ ] 3.5.3 Generate markdown output
-  - [ ] 3.5.4 Calculate overall confidence
-  - [ ] 3.5.5 Track timing per stage
+- [x] 3.5 Implement result assembly
+  - [x] 3.5.1 Create unified result model
+  - [x] 3.5.2 Assemble per-field bboxes
+  - [x] 3.5.3 Generate markdown output
+  - [x] 3.5.4 Calculate overall confidence
+  - [x] 3.5.5 Track timing per stage
 
-- [ ] 3.6 Implement caching strategy
-  - [ ] 3.6.1 Add Redis client
-  - [ ] 3.6.2 Implement layout detection caching
-  - [ ] 3.6.3 Create cache key from image hash + options
-  - [ ] 3.6.4 Set configurable TTL (default 1 hour)
-  - [ ] 3.6.5 Implement cache invalidation
+- [x] 3.6 Implement caching strategy
+  - [x] 3.6.1 Add Redis client
+  - [x] 3.6.2 Implement layout detection caching
+  - [x] 3.6.3 Create cache key from image hash + options
+  - [x] 3.6.4 Set configurable TTL (default 1 hour)
+  - [x] 3.6.5 Implement cache invalidation
 
-- [ ] 3.7 Implement fallback behavior
-  - [ ] 3.7.1 Handle PaddleOCR service unavailable
+- [x] 3.7 Implement fallback behavior
+  - [x] 3.7.1 Handle PaddleOCR service unavailable
     - [ ] Use full-page mode with single bbox
     - [ ] Log fallback decision
-  - [ ] 3.7.2 Handle GLM-OCR service unavailable
+  - [x] 3.7.2 Handle GLM-OCR service unavailable
     - [ ] Return layout detection results only
     - [ ] Mark content extraction as failed
-  - [ ] 3.7.3 Handle both services unavailable
+  - [x] 3.7.3 Handle both services unavailable
     - [ ] Return HTTP 503
     - [ ] Include error message
-  - [ ] 3.7.4 Handle partial region failures
+  - [x] 3.7.4 Handle partial region failures
     - [ ] Return successful regions
     - [ ] Include error list for failed regions
 
-- [ ] 3.8 Add circuit breaker pattern
-  - [ ] 3.8.1 Implement circuit breaker for PaddleOCR service
-  - [ ] 3.8.2 Implement circuit breaker for GLM-OCR service
-  - [ ] 3.8.3 Add failure threshold and recovery timeout
-  - [ ] 3.8.4 Log circuit breaker state changes
+- [x] 3.8 Add circuit breaker pattern
+  - [x] 3.8.1 Implement circuit breaker for PaddleOCR service
+  - [x] 3.8.2 Implement circuit breaker for GLM-OCR service
+  - [x] 3.8.3 Add failure threshold and recovery timeout
+  - [x] 3.8.4 Log circuit breaker state changes
 
-- [ ] 3.9 Update job processing options
-  - [ ] 3.9.1 Add `enable_layout_detection` option
-  - [ ] 3.9.2 Add `layout_detection_options` object
-  - [ ] 3.9.3 Add `parallel_region_processing` option
-  - [ ] 3.9.4 Add `max_parallel_regions` option
-  - [ ] 3.9.5 Add `cache_layout_results` option
+- [x] 3.9 Update job processing options
+  - [x] 3.9.1 Add `enable_layout_detection` option
+  - [x] 3.9.2 Add `layout_detection_options` object
+  - [x] 3.9.3 Add `parallel_region_processing` option
+  - [x] 3.9.4 Add `max_parallel_regions` option
+  - [x] 3.9.5 Add `cache_layout_results` option
 
-- [ ] 3.10 Add logging and monitoring
-  - [ ] 3.10.1 Implement structured JSON logging
-  - [ ] 3.10.2 Add trace ID propagation
-  - [ ] 3.10.3 Log orchestration steps
-  - [ ] 3.10.4 Log fallback decisions
-  - [ ] 3.10.5 Add metrics for latency and error rates
+- [x] 3.10 Add logging and monitoring
+  - [x] 3.10.1 Implement structured JSON logging
+  - [x] 3.10.2 Add trace ID propagation
+  - [x] 3.10.3 Log orchestration steps
+  - [x] 3.10.4 Log fallback decisions
+  - [x] 3.10.5 Add metrics for latency and error rates
 
-- [ ] 3.11 Write unit tests
-  - [ ] 3.11.1 Create tests for layout detection orchestration
-  - [ ] 3.11.2 Create tests for image cropping
-  - [ ] 3.11.3 Create tests for result assembly
-  - [ ] 3.11.4 Create tests for caching logic
-  - [ ] 3.11.5 Create tests for fallback behavior
+- [x] 3.11 Write unit tests
+  - [x] 3.11.1 Create tests for layout detection orchestration
+  - [x] 3.11.2 Create tests for image cropping
+  - [x] 3.11.3 Create tests for result assembly
+  - [x] 3.11.4 Create tests for caching logic
+  - [x] 3.11.5 Create tests for fallback behavior
 
-- [ ] 3.12 Write integration tests
-  - [ ] 3.12.1 Test full two-stage pipeline
-  - [ ] 3.12.2 Test fallback when PaddleOCR unavailable
-  - [ ] 3.12.3 Test fallback when GLM-OCR unavailable
-  - [ ] 3.12.4 Test caching functionality
-  - [ ] 3.12.5 Test batch region processing
+- [x] 3.12 Write integration tests
+  - [x] 3.12.1 Test full two-stage pipeline
+  - [x] 3.12.2 Test fallback when PaddleOCR unavailable
+  - [x] 3.12.3 Test fallback when GLM-OCR unavailable
+  - [x] 3.12.4 Test caching functionality
+  - [x] 3.12.5 Test batch region processing
 
 ## Task 4: Docker Compose Configuration
 
-- [ ] 4.1 Create docker-compose.yml
-  - [ ] 4.1.1 Define `paddleocr-service` container
+- [x] 4.1 Create docker-compose.yml
+  - [x] 4.1.1 Define `paddleocr-service` container
     - [ ] Build from `services/paddleocr-service/Dockerfile`
     - [ ] Expose port 8001
     - [ ] Set environment variables
     - [ ] Add health check
-  - [ ] 4.1.2 Define `glm-ocr-service` container (modified)
+  - [x] 4.1.2 Define `glm-ocr-service` container (modified)
     - [ ] Update existing container configuration
     - [ ] Expose port 8002
     - [ ] Add new endpoint health checks
-  - [ ] 4.1.3 Define `api-gateway` container (enhanced)
+  - [x] 4.1.3 Define `api-gateway` container (enhanced)
     - [ ] Update existing container configuration
     - [ ] Add service URL environment variables
     - [ ] Add Redis connection settings
-  - [ ] 4.1.4 Define supporting services
+  - [x] 4.1.4 Define supporting services
     - [ ] Redis for caching
     - [ ] MinIO for object storage
     - [ ] Temporal for workflow management
 
-- [ ] 4.2 Configure network settings
-  - [ ] 4.2.1 Create custom bridge network
-  - [ ] 4.2.2 Set service names for DNS resolution
-  - [ ] 4.2.3 Configure internal service communication
+- [x] 4.2 Configure network settings
+  - [x] 4.2.1 Create custom bridge network
+  - [x] 4.2.2 Set service names for DNS resolution
+  - [x] 4.2.3 Configure internal service communication
 
-- [ ] 4.3 Configure volumes
-  - [ ] 4.3.1 PaddleOCR model cache volume
+- [x] 4.3 Configure volumes
+  - [x] 4.3.1 PaddleOCR model cache volume
   - [ ] GLM-OCR model cache volume
   - [ ] Redis data volume
   - [ ] MinIO data volume
 
-- [ ] 4.4 Configure resource limits
-  - [ ] 4.4.1 PaddleOCR service: 2 CPU, 4GB RAM (CPU mode) or 1 GPU, 6GB VRAM
-  - [ ] 4.4.2 GLM-OCR service: 1 GPU, 8GB VRAM, 16GB RAM
-  - [ ] 4.4.3 API Gateway: 1 CPU, 2GB RAM
-  - [ ] 4.4.4 Redis: 1 CPU, 2GB RAM
-  - [ ] 4.4.5 MinIO: 2 CPU, 4GB RAM
+- [x] 4.4 Configure resource limits
+  - [x] 4.4.1 PaddleOCR service: 2 CPU, 4GB RAM (CPU mode) or 1 GPU, 6GB VRAM
+  - [x] 4.4.2 GLM-OCR service: 1 GPU, 8GB VRAM, 16GB RAM
+  - [x] 4.4.3 API Gateway: 1 CPU, 2GB RAM
+  - [x] 4.4.4 Redis: 1 CPU, 2GB RAM
+  - [x] 4.4.5 MinIO: 2 CPU, 4GB RAM
 
-- [ ] 4.5 Add health checks
-  - [ ] 4.5.1 Configure container health checks
-  - [ ] 4.5.2 Set restart policies
-  - [ ] 4.5.3 Add dependency ordering
+- [x] 4.5 Add health checks
+  - [x] 4.5.1 Configure container health checks
+  - [x] 4.5.2 Set restart policies
+  - [x] 4.5.3 Add dependency ordering
 
-- [ ] 4.6 Create docker-compose.override.yml
-  - [ ] 4.6.1 Development environment overrides
-  - [ ] 4.6.2 GPU configuration for development
-  - [ ] 4.6.3 Volume mounts for development
+- [x] 4.6 Create docker-compose.override.yml
+  - [x] 4.6.1 Development environment overrides
+  - [x] 4.6.2 GPU configuration for development
+  - [x] 4.6.3 Volume mounts for development
 
-- [ ] 4.7 Create .env.example
-  - [ ] 4.7.1 Document all environment variables
-  - [ ] 4.7.2 Provide default values
-  - [ ] 4.7.3 Add comments for each variable
+- [x] 4.7 Create .env.example
+  - [x] 4.7.1 Document all environment variables
+  - [x] 4.7.2 Provide default values
+  - [x] 4.7.3 Add comments for each variable
 
-- [ ] 4.8 Write deployment documentation
-  - [ ] 4.8.1 Docker Compose setup instructions
-  - [ ] 4.8.2 Environment variable reference
-  - [ ] 4.8.3 Troubleshooting common issues
+- [x] 4.8 Write deployment documentation
+  - [x] 4.8.1 Docker Compose setup instructions
+  - [x] 4.8.2 Environment variable reference
+  - [x] 4.8.3 Troubleshooting common issues
 
 ## Task 5: Testing
 
-- [ ] 5.1 Unit tests
-  - [ ] 5.1.1 PaddleOCR service unit tests (>80% coverage)
+- [-] 5.1 Unit tests
+  - [x] 5.1.1 PaddleOCR service unit tests (>80% coverage)
     - [ ] Layout detector tests
     - [ ] Configuration tests
     - [ ] Model tests
-  - [ ] 5.1.2 GLM-OCR service unit tests (>80% coverage)
+  - [x] 5.1.2 GLM-OCR service unit tests (>80% coverage)
     - [ ] New endpoint tests
     - [ ] Prompt mapping tests
     - [ ] Validation tests

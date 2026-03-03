@@ -154,6 +154,31 @@ func (c *RedisCache) GetJobStatus(ctx context.Context, jobID string) string {
 	return val
 }
 
+// ─── Generic Cache Operations ───
+
+// Get retrieves a value from cache
+func (c *RedisCache) Get(ctx context.Context, key string) (string, bool) {
+	fullKey := c.prefix + key
+	val, err := c.client.Get(ctx, fullKey).Result()
+	if err == redis.Nil {
+		return "", false
+	}
+	if err != nil {
+		log.Printf("⚠️ Redis get error: %v", err)
+		return "", false
+	}
+	return val, true
+}
+
+// Set stores a value in cache with TTL in seconds
+func (c *RedisCache) Set(ctx context.Context, key, value string, ttlSeconds int) {
+	fullKey := c.prefix + key
+	ttl := time.Duration(ttlSeconds) * time.Second
+	if err := c.client.Set(ctx, fullKey, value, ttl).Err(); err != nil {
+		log.Printf("⚠️ Redis set error: %v", err)
+	}
+}
+
 // ─── Stats ───
 
 // GetCacheStats returns cache hit/miss counts

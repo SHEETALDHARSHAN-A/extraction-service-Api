@@ -14,10 +14,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/user/idep/api-gateway/cache"
+	"github.com/user/idep/api-gateway/clients"
 	"github.com/user/idep/api-gateway/config"
 	"github.com/user/idep/api-gateway/handlers"
 	"github.com/user/idep/api-gateway/middleware"
 	"github.com/user/idep/api-gateway/models"
+	"github.com/user/idep/api-gateway/orchestrator"
 	"github.com/user/idep/api-gateway/storage"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
@@ -26,11 +28,14 @@ import (
 )
 
 var (
-	db             *gorm.DB
-	minioStore     *storage.MinioClient
-	temporalClient client.Client
-	redisCache     *cache.RedisCache
-	cfg            *config.Config
+	db                *gorm.DB
+	minioStore        *storage.MinioClient
+	temporalClient    client.Client
+	redisCache        *cache.RedisCache
+	cfg               *config.Config
+	paddleOCRClient   *clients.PaddleOCRClient
+	glmOCRClient      *clients.GLMOCRClient
+	docOrchestrator   *orchestrator.Orchestrator
 )
 
 func main() {
@@ -73,6 +78,39 @@ func main() {
 	if err != nil {
 		log.Printf("⚠️ Redis cache unavailable (non-fatal): %v", err)
 	}
+
+	// --- Initialize Service Clients ---
+	paddleOCRClient = clients.NewPaddleOCRClient(
+		cfg.PaddleOCRServiceURL,
+		cfg.ServiceRequestTimeout,
+		cfg.ServiceRetryAttempts,
+		cfg.CircuitBreakerThreshold,
+		cfg.CircuitBreakerTimeout,
+	)
+	log.Println("✅ PaddleOCR client initialized")
+
+	glmOCRClient = clients.NewGLMOCRClient(
+		cfg.GLMOCRServiceURL,
+		cfg.ServiceRequestTimeout,
+		cfg.ServiceRetryAttempts,
+		cfg.CircuitBreakerThreshold,
+		cfg.CircuitBreakerTimeout,
+	)
+	log.Println("✅ GLM-OCR client initialized")
+
+	// --- Initialize Orchestrator ---
+	docOrchestrator = orchestrator.NewOrchestrator(
+		paddleOCRClient,
+		glmOCRClient,
+		redisCache,
+		&orchestrator.OrchestratorConfig{
+			EnableLayoutDetection: cfg.EnableLayoutDetection,
+			CacheLayoutResults:    cfg.CacheLayoutResults,
+			MaxParallelRegions:    cfg.MaxParallelRegions,
+			ParallelProcessing:    true,
+		},
+	)
+	log.Println("✅ Document orchestrator initialized")
 
 	// --- Gin Router ---
 	r := gin.Default()
@@ -202,6 +240,16 @@ func uploadDocument(c *gin.Context) {
 	maxTokens := c.DefaultPostForm("max_tokens", "4096")
 	precisionMode := c.DefaultPostForm("precision_mode", "normal")
 	extractFieldsRaw := strings.TrimSpace(c.DefaultPostForm("extract_fields", ""))
+	
+	// Layout detection options
+	enableLayoutDetection := c.DefaultPostForm("enable_layout_detection", "false") == "true"
+	minConfidence := c.DefaultPostForm("min_confidence", "0.5")
+	detectTables := c.DefaultPostForm("detect_tables", "true") == "true"
+	detectFormulas := c.DefaultPostForm("detect_formulas", "true") == "true"
+	parallelRegionProcessing := c.DefaultPostForm("parallel_region_processing", "true") == "true"
+	maxParallelRegions := c.DefaultPostForm("max_parallel_regions", "5")
+	cacheLayoutResults := c.DefaultPostForm("cache_layout_results", "true") == "true"
+	
 	extractFields := []string{}
 	if extractFieldsRaw != "" {
 		for _, f := range strings.Split(extractFieldsRaw, ",") {
@@ -258,21 +306,30 @@ func uploadDocument(c *gin.Context) {
 		"file_ext":       filepath.Ext(header.Filename),
 		"output_formats": outputFormats,
 		"options": map[string]interface{}{
-			"prompt":                  customPrompt,
-			"include_coordinates":     includeCoordinates,
-			"include_word_confidence": includeWordConfidence,
-			"include_line_confidence": includeLineConfidence,
-			"include_page_layout":     includePageLayout,
-			"language":                language,
-			"granularity":             granularity,
-			"redact_pii":              redactPII,
-			"enhance":                 enhance,
-			"deskew":                  deskew,
-			"max_pages":               maxPages,
-			"temperature":             temperature,
-			"max_tokens":              maxTokens,
-			"precision_mode":          precisionMode,
-			"extract_fields":          extractFields,
+			"prompt":                     customPrompt,
+			"include_coordinates":        includeCoordinates,
+			"include_word_confidence":    includeWordConfidence,
+			"include_line_confidence":    includeLineConfidence,
+			"include_page_layout":        includePageLayout,
+			"language":                   language,
+			"granularity":                granularity,
+			"redact_pii":                 redactPII,
+			"enhance":                    enhance,
+			"deskew":                     deskew,
+			"max_pages":                  maxPages,
+			"temperature":                temperature,
+			"max_tokens":                 maxTokens,
+			"precision_mode":             precisionMode,
+			"extract_fields":             extractFields,
+			"enable_layout_detection":    enableLayoutDetection,
+			"parallel_region_processing": parallelRegionProcessing,
+			"layout_detection_options": map[string]interface{}{
+				"min_confidence":   minConfidence,
+				"detect_tables":    detectTables,
+				"detect_formulas":  detectFormulas,
+				"max_parallel_regions": maxParallelRegions,
+				"cache_layout_results": cacheLayoutResults,
+			},
 		},
 	}
 
@@ -301,21 +358,30 @@ func uploadDocument(c *gin.Context) {
 		"workflow_id":    we.GetID(),
 		"output_formats": outputFormats,
 		"options": gin.H{
-			"prompt":                  customPrompt,
-			"include_coordinates":     includeCoordinates,
-			"include_word_confidence": includeWordConfidence,
-			"include_line_confidence": includeLineConfidence,
-			"include_page_layout":     includePageLayout,
-			"language":                language,
-			"granularity":             granularity,
-			"redact_pii":              redactPII,
-			"enhance":                 enhance,
-			"deskew":                  deskew,
-			"max_pages":               maxPages,
-			"temperature":             temperature,
-			"max_tokens":              maxTokens,
-			"precision_mode":          precisionMode,
-			"extract_fields":          extractFields,
+			"prompt":                     customPrompt,
+			"include_coordinates":        includeCoordinates,
+			"include_word_confidence":    includeWordConfidence,
+			"include_line_confidence":    includeLineConfidence,
+			"include_page_layout":        includePageLayout,
+			"language":                   language,
+			"granularity":                granularity,
+			"redact_pii":                 redactPII,
+			"enhance":                    enhance,
+			"deskew":                     deskew,
+			"max_pages":                  maxPages,
+			"temperature":                temperature,
+			"max_tokens":                 maxTokens,
+			"precision_mode":             precisionMode,
+			"extract_fields":             extractFields,
+			"enable_layout_detection":    enableLayoutDetection,
+			"parallel_region_processing": parallelRegionProcessing,
+			"layout_detection_options": gin.H{
+				"min_confidence":       minConfidence,
+				"detect_tables":        detectTables,
+				"detect_formulas":      detectFormulas,
+				"max_parallel_regions": maxParallelRegions,
+				"cache_layout_results": cacheLayoutResults,
+			},
 		},
 		"result_url": fmt.Sprintf("/jobs/%s/result", jobID),
 		"status_url": fmt.Sprintf("/jobs/%s", jobID),

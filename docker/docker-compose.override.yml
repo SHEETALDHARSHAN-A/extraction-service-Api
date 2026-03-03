@@ -1,0 +1,87 @@
+# Docker Compose Override for Development
+# This file is automatically loaded by docker-compose and overrides settings from docker-compose.yml
+# Use this for development-specific configurations
+
+services:
+  # ═══════════════════════════════════════════
+  # Development Overrides
+  # ═══════════════════════════════════════════
+
+  paddleocr-service:
+    # Enable GPU support for development (requires NVIDIA GPU)
+    # Uncomment the following lines to enable GPU mode:
+    # environment:
+    #   - PADDLEOCR_USE_GPU=true
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    
+    # Mount source code for hot-reloading during development
+    volumes:
+      - ../services/paddleocr-service/app:/app/app:ro
+      - paddleocr_models:/app/models
+    
+    # Enable debug logging
+    environment:
+      - LOG_LEVEL=DEBUG
+      - PADDLEOCR_USE_GPU=false
+    
+    # Override command for development with auto-reload
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+
+  glm-ocr-service:
+    # Mount source code for hot-reloading during development
+    volumes:
+      - ../services/glm-ocr-service/app:/app/app:ro
+      - glm_models:/opt/models
+    
+    # Enable debug logging
+    environment:
+      - LOG_LEVEL=DEBUG
+      - GLM_PRECISION_MODE=normal
+    
+    # Override command for development with auto-reload
+    command: ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002", "--reload"]
+
+  api-gateway:
+    # Enable debug logging and development features
+    environment:
+      - LOG_LEVEL=DEBUG
+      - ENABLE_LAYOUT_DETECTION=true
+      - CACHE_LAYOUT_RESULTS=true
+    
+    # Mount source code for hot-reloading (if using air or similar)
+    volumes:
+      - ../services/api-gateway:/app:ro
+
+  # ═══════════════════════════════════════════
+  # Development Tools
+  # ═══════════════════════════════════════════
+
+  # Redis Commander for Redis management
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+
+  # Adminer for PostgreSQL management
+  adminer:
+    image: adminer:latest
+    ports:
+      - "8082:8080"
+    environment:
+      - ADMINER_DEFAULT_SERVER=db
+    depends_on:
+      - db
+
+volumes:
+  paddleocr_models:
+  glm_models:

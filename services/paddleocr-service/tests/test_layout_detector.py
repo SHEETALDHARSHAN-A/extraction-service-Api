@@ -300,5 +300,113 @@ class TestErrorHandling(unittest.TestCase):
                 detector._initialize_engine()
 
 
+class TestRegionProcessing(unittest.TestCase):
+    """Test region processing and filtering."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.test_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+    
+    def test_detect_regions_with_filtering(self):
+        """Test that regions below confidence threshold are filtered."""
+        detector = LayoutDetector(use_gpu=False)
+        
+        # Mock engine with regions of varying confidence
+        mock_engine = Mock()
+        mock_engine.return_value = [
+            {'type': 'text', 'bbox': [10, 20, 90, 80], 'score': 0.95},
+            {'type': 'table', 'bbox': [15, 25, 85, 75], 'score': 0.60},
+            {'type': 'formula', 'bbox': [20, 30, 80, 70], 'score': 0.30},  # Below 0.5
+            {'type': 'title', 'bbox': [25, 35, 75, 65], 'score': 0.85},
+        ]
+        
+        detector.layout_engine = mock_engine
+        detector.initialized = True
+        
+        # Test with default confidence (0.5)
+        regions, _ = detector.detect_regions(self.test_image, min_confidence=0.5)
+        
+        # Should have 3 regions (0.95, 0.60, 0.85) - one filtered (0.30)
+        self.assertEqual(len(regions), 3)
+        
+        # Test with higher confidence (0.7)
+        regions, _ = detector.detect_regions(self.test_image, min_confidence=0.7)
+        
+        # Should have 2 regions (0.95, 0.85)
+        self.assertEqual(len(regions), 2)
+    
+    def test_detect_regions_with_invalid_bbox(self):
+        """Test handling of invalid bounding boxes."""
+        detector = LayoutDetector(use_gpu=False)
+        
+        # Mock engine with invalid bbox
+        mock_engine = Mock()
+        mock_engine.return_value = [
+            {'type': 'text', 'bbox': [10, 20], 'score': 0.95},  # Invalid: only 2 coords
+            {'type': 'table', 'bbox': 'invalid', 'score': 0.85},  # Invalid: string
+            {'type': 'formula', 'bbox': [10, 20, 90, 80], 'score': 0.75},  # Valid
+        ]
+        
+        detector.layout_engine = mock_engine
+        detector.initialized = True
+        
+        regions, _ = detector.detect_regions(self.test_image)
+        
+        # All regions should be returned, but invalid bboxes should be [0, 0, 0, 0]
+        self.assertEqual(len(regions), 3)
+        self.assertEqual(regions[0]['bbox'], [0, 0, 0, 0])
+        self.assertEqual(regions[1]['bbox'], [0, 0, 0, 0])
+        self.assertEqual(regions[2]['bbox'], [10, 20, 90, 80])
+    
+    def test_detect_regions_without_score(self):
+        """Test handling of regions without confidence score."""
+        detector = LayoutDetector(use_gpu=False)
+        
+        # Mock engine with regions missing score
+        mock_engine = Mock()
+        mock_engine.return_value = [
+            {'type': 'text', 'bbox': [10, 20, 90, 80]},  # No score
+        ]
+        
+        detector.layout_engine = mock_engine
+        detector.initialized = True
+        
+        regions, _ = detector.detect_regions(self.test_image, min_confidence=0.5)
+        
+        # Should have 1 region with default confidence of 1.0
+        self.assertEqual(len(regions), 1)
+        self.assertEqual(regions[0]['confidence'], 1.0)
+
+
+class TestImageConversion(unittest.TestCase):
+    """Test image conversion edge cases."""
+    
+    def test_convert_pil_rgba_image(self):
+        """Test conversion of RGBA PIL image."""
+        detector = LayoutDetector()
+        
+        # Create RGBA image
+        rgba_image = Image.new('RGBA', (100, 100), color=(255, 0, 0, 128))
+        
+        # Convert to numpy
+        result = detector._convert_image_to_numpy(rgba_image)
+        
+        # Should be RGB (3 channels)
+        self.assertEqual(result.shape, (100, 100, 3))
+    
+    def test_convert_pil_grayscale_image(self):
+        """Test conversion of grayscale PIL image."""
+        detector = LayoutDetector()
+        
+        # Create grayscale image
+        gray_image = Image.new('L', (100, 100), color=128)
+        
+        # Convert to numpy
+        result = detector._convert_image_to_numpy(gray_image)
+        
+        # Should be RGB (3 channels)
+        self.assertEqual(result.shape, (100, 100, 3))
+
+
 if __name__ == '__main__':
     unittest.main()

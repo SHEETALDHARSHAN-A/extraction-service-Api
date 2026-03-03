@@ -17,7 +17,6 @@ from app.models import (
     ErrorResponse
 )
 
-
 class TestRegion:
     """Tests for Region model."""
     
@@ -74,6 +73,33 @@ class TestRegion:
         
         with pytest.raises(ValidationError):
             Region(index=0, type="text", bbox=[10, 20, 30, 40, 50], confidence=0.9)
+    
+    def test_region_bbox_coordinate_validation(self):
+        """Test bbox coordinate validation (x2 > x1, y2 > y1)."""
+        # Valid bbox
+        Region(index=0, type="text", bbox=[10, 20, 30, 40], confidence=0.9)
+        
+        # Invalid: x2 <= x1
+        with pytest.raises(ValidationError):
+            Region(index=0, type="text", bbox=[30, 20, 10, 40], confidence=0.9)
+        
+        # Invalid: y2 <= y1
+        with pytest.raises(ValidationError):
+            Region(index=0, type="text", bbox=[10, 40, 30, 20], confidence=0.9)
+        
+        # Invalid: negative coordinates
+        with pytest.raises(ValidationError):
+            Region(index=0, type="text", bbox=[-10, 20, 30, 40], confidence=0.9)
+    
+    def test_region_index_validation(self):
+        """Test index validation (must be non-negative)."""
+        # Valid index
+        Region(index=0, type="text", bbox=[10, 20, 30, 40], confidence=0.9)
+        Region(index=100, type="text", bbox=[10, 20, 30, 40], confidence=0.9)
+        
+        # Invalid: negative index
+        with pytest.raises(ValidationError):
+            Region(index=-1, type="text", bbox=[10, 20, 30, 40], confidence=0.9)
 
 
 class TestPageDimensions:

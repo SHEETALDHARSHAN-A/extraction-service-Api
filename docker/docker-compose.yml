@@ -22,6 +22,15 @@ services:
       - JWT_SECRET=idep-dev-secret-change-in-production
       - API_KEYS=dev-key-123:admin,test-key-456:operator
       - API_PORT=8000
+      - PADDLEOCR_SERVICE_URL=http://paddleocr-service:8001
+      - GLM_OCR_SERVICE_URL=http://glm-ocr-service:8002
+      - ENABLE_LAYOUT_DETECTION=true
+      - CACHE_LAYOUT_RESULTS=true
+      - LAYOUT_CACHE_TTL_SECONDS=3600
+      - MAX_PARALLEL_REGIONS=5
+      - SERVICE_TIMEOUT_SECONDS=30
+      - CIRCUIT_BREAKER_THRESHOLD=5
+      - CIRCUIT_BREAKER_TIMEOUT_SECONDS=60
     depends_on:
       db:
         condition: service_started
@@ -31,6 +40,18 @@ services:
         condition: service_started
       minio:
         condition: service_started
+      paddleocr-service:
+        condition: service_healthy
+      glm-ocr-service:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
     restart: on-failure
 
   temporal-worker:
@@ -80,6 +101,79 @@ services:
   # ═══════════════════════════════════════════
   # Python Microservices
   # ═══════════════════════════════════════════
+
+  paddleocr-service:
+    build:
+      context: ..
+      dockerfile: services/paddleocr-service/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - PADDLEOCR_MODEL_DIR=/app/models
+      - PADDLEOCR_USE_GPU=false
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8001
+      - LOG_LEVEL=INFO
+      - MIN_CONFIDENCE_DEFAULT=0.5
+      - MAX_IMAGE_SIZE_MB=10
+      - REQUEST_TIMEOUT_SECONDS=30
+    volumes:
+      - paddleocr_models:/app/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8001/health', timeout=5).raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    restart: on-failure
+
+  glm-ocr-service:
+    build:
+      context: ..
+      dockerfile: services/glm-ocr-service/Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - GLM_MODEL_PATH=zai-org/GLM-OCR
+      - GLM_PRECISION_MODE=normal
+      - CUDA_VISIBLE_DEVICES=0
+      - TRANSFORMERS_CACHE=/opt/models
+      - HF_HOME=/opt/models
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8002
+      - LOG_LEVEL=INFO
+      - MAX_TOKENS_DEFAULT=2048
+      - REQUEST_TIMEOUT_SECONDS=60
+    volumes:
+      - glm_models:/opt/models
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:8002/health', timeout=5).raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 16G
+        reservations:
+          cpus: '2'
+          memory: 8G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: on-failure
+    shm_size: '2g'
 
   postprocessing-service:
     build:
@@ -150,7 +244,22 @@ services:
       - POSTGRES_PWD=postgres
       - POSTGRES_SEEDS=db
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "localhost:7233", "cluster", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
     restart: on-failure
 
   db:
@@ -163,11 +272,42 @@ services:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    restart: on-failure
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    restart: on-failure
 
   minio:
     image: minio/minio
@@ -180,6 +320,20 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    restart: on-failure
 
   # ═══════════════════════════════════════════
   # Observability
@@ -225,3 +379,11 @@ volumes:
   grafana_data:
   idep_tmp:
   hf_cache:
+  paddleocr_models:
+  glm_models:
+  redis_data:
+
+networks:
+  default:
+    name: idep-network
+    driver: bridge

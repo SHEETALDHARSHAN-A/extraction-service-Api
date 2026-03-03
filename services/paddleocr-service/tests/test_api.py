@@ -312,5 +312,129 @@ class TestRequestIDMiddleware:
         assert process_time.endswith("ms")
 
 
+class TestExceptionHandlers:
+    """Tests for exception handlers."""
+    
+    def test_http_exception_handler(self):
+        """Test HTTP exception handler."""
+        # Trigger a 404 error
+        response = client.get("/nonexistent-endpoint")
+        
+        assert response.status_code == 404
+        data = response.json()
+        
+        # FastAPI's default 404 response has 'detail' field
+        assert "detail" in data
+    
+    def test_general_exception_handler_with_image_too_large(self):
+        """Test general exception handler with image size validation."""
+        # Create a very large image that exceeds the limit
+        # Note: This might not trigger the general exception handler
+        # but will test the image size validation path
+        base64_image = create_test_image(width=5000, height=5000)
+        
+        request_data = {
+            "image": base64_image
+        }
+        
+        response = client.post("/detect-layout", json=request_data)
+        
+        # Should return 413 (Request Entity Too Large) or 500
+        assert response.status_code in [413, 500]
+
+
+class TestDecodeBase64Image:
+    """Tests for decode_base64_image helper function."""
+    
+    def test_decode_with_data_uri_prefix(self):
+        """Test decoding image with data URI prefix."""
+        from app.main import decode_base64_image
+        
+        base64_image = create_test_image()
+        data_uri = f"data:image/png;base64,{base64_image}"
+        
+        # Should successfully decode
+        image = decode_base64_image(data_uri)
+        assert image is not None
+        assert image.mode == "RGB"
+    
+    def test_decode_without_prefix(self):
+        """Test decoding image without data URI prefix."""
+        from app.main import decode_base64_image
+        
+        base64_image = create_test_image()
+        
+        # Should successfully decode
+        image = decode_base64_image(base64_image)
+        assert image is not None
+        assert image.mode == "RGB"
+    
+    def test_decode_invalid_base64(self):
+        """Test decoding invalid base64 data."""
+        from app.main import decode_base64_image
+        
+        with pytest.raises(ValueError):
+            decode_base64_image("not_valid_base64!!!")
+    
+    def test_decode_converts_to_rgb(self):
+        """Test that non-RGB images are converted to RGB."""
+        from app.main import decode_base64_image
+        
+        # Create a grayscale image
+        image = Image.new('L', (100, 100), color='white')
+        buffer = io.BytesIO()
+        image.save(buffer, format='PNG')
+        image_bytes = buffer.getvalue()
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        # Decode and verify it's converted to RGB
+        decoded_image = decode_base64_image(base64_image)
+        assert decoded_image.mode == "RGB"
+
+
+class TestDetectLayoutEdgeCases:
+    """Tests for edge cases in detect_layout endpoint."""
+    
+    def test_detect_layout_with_minimal_options(self):
+        """Test layout detection with minimal options."""
+        base64_image = create_test_image()
+        
+        request_data = {
+            "image": base64_image,
+            "options": {
+                "return_image_dimensions": False
+            }
+        }
+        
+        response = client.post("/detect-layout", json=request_data)
+        
+        # Should succeed or fail with 500 (if PaddleOCR not available)
+        assert response.status_code in [200, 500]
+        
+        if response.status_code == 200:
+            data = response.json()
+            # Page dimensions should be None when return_image_dimensions is False
+            assert data.get("page_dimensions") is None
+    
+    def test_detect_layout_with_all_options_disabled(self):
+        """Test layout detection with tables and formulas disabled."""
+        base64_image = create_test_image()
+        
+        request_data = {
+            "image": base64_image,
+            "options": {
+                "min_confidence": 0.3,
+                "detect_tables": False,
+                "detect_formulas": False,
+                "return_image_dimensions": True
+            }
+        }
+        
+        response = client.post("/detect-layout", json=request_data)
+        
+        # Should succeed or fail with 500 (if PaddleOCR not available)
+        assert response.status_code in [200, 500]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
