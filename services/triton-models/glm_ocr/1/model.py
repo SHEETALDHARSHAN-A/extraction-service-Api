@@ -129,11 +129,11 @@ if not MOCK_MODE:
 
     if _TRANSFORMERS_OK:
         try:
-            from paddleocr import PPStructure as _PPStructure  # type: ignore  # noqa: F401
+            from paddleocr import PPStructureV3 as _PPStructure  # type: ignore  # noqa: F401
             _PADDLEOCR_OK = True
             logger.info("... PaddleOCR / PP-DocLayout available (stage-1 layout)")
         except ImportError:
-            logger.info("PaddleOCR not installed -- running full-page OCR (no layout split)")
+            logger.info("PaddleOCR not installed at import time -- will check again at initialization")
 
 
 # """ GLM-OCR Official Task Prompts """"""""""""""""""""""""""""""""""""""""""
@@ -547,21 +547,37 @@ class TritonPythonModel:
             return
 
         # "" PP-DocLayout for spatial stage """"""""""""""""""""""""""""""""
-        if _PADDLEOCR_OK:
+        # Try to import PaddleOCR at initialization time (in case it was installed after module import)
+        paddleocr_available = _PADDLEOCR_OK
+        if not paddleocr_available:
             try:
-                paddleocr_home = os.getenv("PADDLEOCR_HOME", "/opt/paddleocr")
-                if not os.path.exists(paddleocr_home):
-                    logger.warning(
-                        "PADDLEOCR_HOME directory does not exist: %s -- layout stage disabled",
-                        paddleocr_home
+                from paddleocr import PPStructureV3 as _PPStructure  # type: ignore  # noqa: F401
+                paddleocr_available = True
+                logger.info("... PaddleOCR detected at initialization time")
+            except ImportError:
+                logger.info("PaddleOCR not available -- running full-page OCR (no layout split)")
+        
+        if paddleocr_available:
+            try:
+                # PaddleOCR will download models automatically to ~/.paddleocr if not found
+                paddleocr_home = os.getenv("PADDLEOCR_HOME", None)
+                from paddleocr import PPStructureV3
+                
+                # PPStructureV3 parameters:
+                # - layout_detection_model_dir: Path to layout detection model
+                # - use_table_recognition: Enable table recognition
+                # - ocr_version: OCR version (default is 'PP-OCRv4')
+                if paddleocr_home and os.path.exists(paddleocr_home):
+                    self.layout_engine = PPStructureV3(
+                        layout_detection_model_dir=paddleocr_home,
+                        use_table_recognition=True,
                     )
                 else:
-                    from paddleocr import PPStructure  # type: ignore
-                    self.layout_engine = PPStructure(
-                        table=True, ocr=False, show_log=False,
-                        layout_model_dir=paddleocr_home,
+                    # Use default model path (will auto-download)
+                    self.layout_engine = PPStructureV3(
+                        use_table_recognition=True,
                     )
-                    logger.info("... PP-DocLayout-V3 ready")
+                logger.info("... PP-DocLayout-V3 ready (PaddleOCR layout detection enabled)")
             except Exception as exc:
                 logger.warning("PP-DocLayout init failed (%s) -- layout stage disabled", exc)
 
