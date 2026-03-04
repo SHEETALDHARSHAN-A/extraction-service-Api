@@ -753,11 +753,362 @@ for f in data["files"]:
 
 ---
 
+## Queue Management Endpoints
+
+### GET /queue/status — Queue Status
+
+Get current queue status including length and estimated wait time.
+
+```bash
+curl http://localhost:8000/queue/status \
+  -H "Authorization: Bearer tp-proj-dev-key-123"
+```
+
+**Response (HTTP 200)**:
+```json
+{
+  "queue_length": 5,
+  "estimated_wait_time_seconds": 75,
+  "processing_count": 1,
+  "avg_wait_time_seconds": 15.3,
+  "avg_processing_time_seconds": 12.8,
+  "throughput_per_hour": 280
+}
+```
+
+### Queue Behavior
+
+The system implements a Redis-based request queue with the following characteristics:
+
+- **Concurrency Control**: Only 1 GPU inference request executes at a time to prevent GPU memory exhaustion
+- **Priority Levels**: Requests can be assigned priority (0=normal, 1=high, 2=urgent)
+- **FIFO Processing**: Within the same priority level, requests are processed in order
+- **Automatic Retry**: Failed requests are automatically retried with exponential backoff (max 3 attempts)
+- **Queue Capacity**: Maximum 50 pending requests (returns HTTP 429 when full)
+
+### Queue Position in Job Status
+
+When you check job status, you'll see queue information:
+
+```bash
+curl http://localhost:8000/jobs/<JOB_ID> \
+  -H "Authorization: Bearer tp-proj-dev-key-123"
+```
+
+**Response when queued**:
+```json
+{
+  "job_id": "abc-123-...",
+  "status": "QUEUED",
+  "queue_position": 3,
+  "estimated_wait_time_seconds": 45,
+  "enqueued_at": "2026-02-26T10:30:00Z"
+}
+```
+
+**Response when processing**:
+```json
+{
+  "job_id": "abc-123-...",
+  "status": "PROCESSING",
+  "started_at": "2026-02-26T10:30:45Z",
+  "progress": "Processing page 2 of 5"
+}
+```
+
+## Enhanced Extraction Options
+
+### Granularity Levels
+
+The `granularity` parameter controls the level of detail in bounding box extraction:
+
+| Granularity | Description | Use Case |
+|-------------|-------------|----------|
+| `block` | Paragraph/section level boxes | General document layout |
+| `line` | Line-level boxes | Line-by-line analysis |
+| `word` | Individual word boxes | Word highlighting, search |
+
+**Example with word-level granularity**:
+```bash
+curl -X POST http://localhost:8000/jobs/upload \
+  -H "Authorization: Bearer tp-proj-dev-key-123" \
+  -F "document=@invoice.pdf" \
+  -F "granularity=word" \
+  -F "include_coordinates=true"
+```
+
+**Response includes word-level boxes**:
+```json
+{
+  "result": {
+    "words": [
+      {"word": "Invoice", "bbox": [100, 50, 60, 20], "confidence": 0.98},
+      {"word": "Number:", "bbox": [165, 50, 55, 20], "confidence": 0.97},
+      {"word": "INV-2026-0042", "bbox": [225, 50, 110, 20], "confidence": 0.96}
+    ]
+  }
+}
+```
+
+### Key-Value Pair Extraction
+
+The `key_value` output format extracts structured key-value pairs with separate bounding boxes for keys and values:
+
+```bash
+curl -X POST http://localhost:8000/jobs/upload \
+  -H "Authorization: Bearer tp-proj-dev-key-123" \
+  -F "document=@form.pdf" \
+  -F "output_formats=key_value" \
+  -F "include_coordinates=true"
+```
+
+**Response**:
+```json
+{
+  "result": {
+    "key_values": [
+      {
+        "key": "Invoice Number",
+        "key_bbox": [100, 50, 120, 20],
+        "value": "INV-2026-0042",
+        "value_bbox": [230, 50, 130, 20],
+        "confidence": 0.95,
+        "key_confidence": 0.97,
+        "value_confidence": 0.94,
+        "association_confidence": 0.96
+      },
+      {
+        "key": "Date",
+        "key_bbox": [100, 80, 40, 20],
+        "value": "2026-02-25",
+        "value_bbox": [150, 80, 100, 20],
+        "confidence": 0.93,
+        "key_confidence": 0.96,
+        "value_confidence": 0.92,
+        "association_confidence": 0.91
+      }
+    ]
+  }
+}
+```
+
+**Supported Key-Value Patterns**:
+- Colon-separated: "Label: Value"
+- Table-based: Key in first column, value in second column
+- Form-field: Label above or beside input field
+- Multi-value: One key with multiple associated values
+
+### Extraction Format Combinations
+
+You can combine multiple output formats:
+
+```bash
+curl -X POST http://localhost:8000/jobs/upload \
+  -H "Authorization: Bearer tp-proj-dev-key-123" \
+  -F "document=@invoice.pdf" \
+  -F "output_formats=text,json,key_value,table" \
+  -F "granularity=word" \
+  -F "include_coordinates=true" \
+  -F "include_word_confidence=true"
+```
+
+**Response includes all requested formats**:
+```json
+{
+  "result": {
+    "text": "INVOICE\nInvoice Number: INV-2026-0042...",
+    "json": {
+      "document_type": "invoice",
+      "fields": {...}
+    },
+    "key_values": [...],
+    "tables": [...],
+    "words": [...]
+  }
+}
+```
+
+## Error Responses and Retry Behavior
+
+### Error Response Format
+
+All errors follow a consistent structure:
+
+```json
+{
+  "error": {
+    "message": "Descriptive error message",
+    "type": "error_type",
+    "code": "error_code",
+    "retry_after_seconds": 60,
+    "details": {
+      "additional": "context"
+    }
+  }
+}
+```
+
+### HTTP Status Codes
+
+| Code | Type | Description | Retry? |
+|------|------|-------------|--------|
+| 400 | `invalid_request_error` | Bad parameters, invalid format | No |
+| 401 | `invalid_request_error` | Missing/invalid API key | No |
+| 413 | `document_too_large` | Document exceeds 10MB limit | No |
+| 429 | `rate_limit_error` | Queue full or rate limit exceeded | Yes |
+| 503 | `service_unavailable` | GPU memory insufficient or service restart | Yes |
+| 500 | `server_error` | Internal server error | Yes |
+
+### Automatic Retry Behavior
+
+The system automatically retries failed requests with exponential backoff:
+
+- **Initial Interval**: 1 second
+- **Backoff Coefficient**: 2.0 (doubles each retry)
+- **Maximum Interval**: 60 seconds
+- **Maximum Attempts**: 3
+- **Jitter**: ±10% to prevent thundering herd
+
+**Example retry sequence**:
+1. First attempt fails → Wait 1 second
+2. Second attempt fails → Wait 2 seconds
+3. Third attempt fails → Wait 4 seconds
+4. Final failure → Job marked as FAILED
+
+### Retryable Errors
+
+The following errors trigger automatic retry:
+- GPU memory errors (503)
+- Triton stub process restarts (503)
+- Temporary network failures
+- Transient model inference errors
+
+### Non-Retryable Errors
+
+The following errors do NOT trigger retry:
+- Document too large (413)
+- Invalid request format (400)
+- Authentication failures (401)
+- Unsupported extraction format (400)
+
+### Error Examples
+
+**Queue Full (HTTP 429)**:
+```json
+{
+  "error": {
+    "message": "Queue is full, please retry later",
+    "type": "rate_limit_error",
+    "code": "queue_full",
+    "retry_after_seconds": 120,
+    "details": {
+      "queue_length": 50,
+      "max_queue_length": 50
+    }
+  }
+}
+```
+
+**GPU Memory Insufficient (HTTP 503)**:
+```json
+{
+  "error": {
+    "message": "Insufficient GPU memory available",
+    "type": "service_unavailable",
+    "code": "gpu_memory_error",
+    "retry_after_seconds": 60,
+    "details": {
+      "available_memory_gb": 1.2,
+      "required_memory_gb": 2.0
+    }
+  }
+}
+```
+
+**Document Too Large (HTTP 413)**:
+```json
+{
+  "error": {
+    "message": "Document exceeds maximum size limit",
+    "type": "document_too_large",
+    "code": "document_size_exceeded",
+    "details": {
+      "document_size_mb": 15.3,
+      "max_size_mb": 10.0
+    }
+  }
+}
+```
+
+**Processing Timeout (HTTP 500)**:
+```json
+{
+  "error": {
+    "message": "Processing timeout exceeded",
+    "type": "server_error",
+    "code": "processing_timeout",
+    "details": {
+      "timeout_seconds": 1800,
+      "pages_completed": 5,
+      "total_pages": 20
+    }
+  }
+}
+```
+
+### Client Retry Recommendations
+
+When implementing client-side retry logic:
+
+1. **Respect `retry_after_seconds`**: Wait at least this long before retrying
+2. **Implement exponential backoff**: Increase wait time between retries
+3. **Add jitter**: Randomize retry timing to prevent thundering herd
+4. **Set maximum retries**: Limit to 3-5 attempts
+5. **Check error type**: Only retry retryable errors (429, 503, 500)
+
+**Example Python retry logic**:
+```python
+import time
+import requests
+
+def upload_with_retry(file_path, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                "http://localhost:8000/jobs/upload",
+                headers={"Authorization": "Bearer tp-proj-dev-key-123"},
+                files={"document": open(file_path, "rb")}
+            )
+            
+            if response.status_code == 202:
+                return response.json()
+            
+            if response.status_code in [429, 503]:
+                error = response.json()["error"]
+                wait_time = error.get("retry_after_seconds", 60)
+                print(f"Retrying after {wait_time}s...")
+                time.sleep(wait_time)
+                continue
+            
+            # Non-retryable error
+            response.raise_for_status()
+            
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff
+                time.sleep(wait_time)
+            else:
+                raise
+    
+    raise Exception("Max retries exceeded")
+```
+
 ## Other Endpoints
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
 | GET | `/health` | No | Service health check |
+| GET | `/queue/status` | Bearer | Queue status and metrics |
 | GET | `/jobs` | Bearer | List all jobs |
 | GET | `/jobs/:id` | Bearer | Job status + metadata |
 | GET | `/jobs/:id/result` | Bearer | Download extraction result |

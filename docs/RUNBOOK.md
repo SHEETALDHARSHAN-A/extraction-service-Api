@@ -407,7 +407,397 @@ docker exec -it extraction-service-triton-1 watch -n 1 nvidia-smi
 
 ---
 
-## 8. Troubleshooting
+## 8. Troubleshooting and Common Issues
+
+### Common Issues and Resolutions
+
+#### Issue 1: Triton Stub Process Becomes Unhealthy
+
+**Symptoms:**
+- Triton health check fails
+- Logs show "Stub process timeout" or "Stub process unhealthy"
+- Requests fail with 503 errors
+- GPU inference stops working
+
+**Root Causes:**
+- Large document processing exceeds stub timeout
+- GPU memory exhaustion
+- Model inference crash
+
+**Resolution Steps:**
+
+1. **Check Triton logs**:
+```powershell
+docker-compose -f docker\docker-compose.yml logs triton | findstr "stub"
+```
+
+2. **Verify stub timeout configuration**:
+```powershell
+docker-compose -f docker\docker-compose.yml exec triton ps aux | findstr "tritonserver"
+# Should show: --backend-config=python,stub-timeout-seconds=600
+```
+
+3. **Check GPU memory**:
+```powershell
+docker exec -it extraction-service-triton-1 nvidia-smi
+```
+
+4. **If GPU memory is exhausted**:
+```powershell
+# Restart Triton to clear GPU memory
+docker-compose -f docker\docker-compose.yml restart triton
+
+# Wait for model to reload (2-3 minutes)
+# Monitor logs
+docker-compose -f docker\docker-compose.yml logs -f triton
+```
+
+5. **If stub timeout is too low**:
+```powershell
+# Update docker-compose.yml to increase timeout
+# --backend-config=python,stub-timeout-seconds=600
+
+# Rebuild and restart
+docker-compose -f docker\docker-compose.yml up -d --build triton
+```
+
+6. **Verify health after restart**:
+```powershell
+curl http://localhost:18000/v2/health/ready
+```
+
+**Prevention:**
+- Ensure stub timeout is set to 600 seconds
+- Monitor GPU memory usage via Grafana
+- Set up alerts for high GPU memory usage (>90%)
+
+---
+
+#### Issue 2: Queue Full - Requests Rejected with HTTP 429
+
+**Symptoms:**
+- API returns HTTP 429 "Queue is full"
+- `retry_after_seconds` in error response
+- Queue length at maximum (50)
+
+**Root Causes:**
+- High request volume exceeding processing capacity
+- Slow processing due to large documents
+- GPU bottleneck (only 1 concurrent inference)
+
+**Resolution Steps:**
+
+1. **Check queue status**:
+```powershell
+curl http://localhost:8000/queue/status
+```
+
+2. **Check Redis queue**:
+```powershell
+docker-compose -f docker\docker-compose.yml exec redis redis-cli ZCARD queue:pending
+docker-compose -f docker\docker-compose.yml exec redis redis-cli HLEN queue:processing
+```
+
+3. **Identify stuck jobs**:
+```powershell
+# Check processing jobs
+docker-compose -f docker\docker-compose.yml exec redis redis-cli HGETALL queue:processing
+
+# Check Temporal workflows
+# Open http://localhost:8080 and look for stuck workflows
+```
+
+4. **Clear stuck jobs** (if identified):
+```powershell
+# Cancel stuck workflow in Temporal UI
+# Or manually remove from Redis (use with caution)
+docker-compose -f docker\docker-compose.yml exec redis redis-cli HDEL queue:processing <job_id>
+```
+
+5. **Increase queue capacity** (temporary):
+```powershell
+# Update .env
+QUEUE_MAX_LENGTH=100
+
+# Restart API Gateway
+docker-compose -f docker\docker-compose.yml restart api-gateway
+```
+
+6. **Monitor queue metrics**:
+```powershell
+# Open Grafana dashboard
+# http://localhost:3000/d/queue-monitoring
+```
+
+**Prevention:**
+- Set up queue length alerts (>40 jobs)
+- Monitor average processing time
+- Consider scaling horizontally (multiple GPU nodes)
+- Implement request prioritization for critical jobs
+
+---
+
+#### Issue 3: GPU Out of Memory Errors
+
+**Symptoms:**
+- Requests fail with "CUDA out of memory"
+- GPU memory usage at 100%
+- Triton logs show memory allocation failures
+
+**Root Causes:**
+- Large document with many pages
+- Memory leak in model code
+- Insufficient GPU memory for model + inference
+
+**Resolution Steps:**
+
+1. **Check GPU memory usage**:
+```powershell
+docker exec -it extraction-service-triton-1 nvidia-smi
+```
+
+2. **Check GLM-OCR service metrics**:
+```powershell
+curl http://localhost:8002/metrics | findstr "gpu_memory"
+```
+
+3. **Clear GPU cache**:
+```powershell
+# Restart GLM-OCR service
+docker-compose -f docker\docker-compose.yml restart glm-ocr-service
+
+# Or restart Triton (more aggressive)
+docker-compose -f docker\docker-compose.yml restart triton
+```
+
+4. **Check for memory leaks**:
+```powershell
+# Monitor GPU memory over time
+docker exec -it extraction-service-triton-1 watch -n 1 nvidia-smi
+
+# Process several documents and watch for memory growth
+```
+
+5. **Reduce batch size** (if applicable):
+```powershell
+# Update GLM-OCR service configuration
+# Reduce MAX_PARALLEL_REGIONS in .env
+MAX_PARALLEL_REGIONS=2
+
+# Restart services
+docker-compose -f docker\docker-compose.yml restart api-gateway temporal-worker
+```
+
+6. **Verify memory management settings**:
+```powershell
+# Check Triton environment variables
+docker-compose -f docker\docker-compose.yml exec triton env | findstr "CUDA"
+# Should show: PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+```
+
+**Prevention:**
+- Monitor GPU memory usage continuously
+- Set up alerts for GPU memory >90%
+- Implement pre-flight memory checks (already in place)
+- Document maximum supported document size
+
+---
+
+#### Issue 4: Slow Processing Times
+
+**Symptoms:**
+- Processing takes longer than expected
+- P95 latency >30 seconds
+- Queue wait times increasing
+
+**Root Causes:**
+- Large documents (many pages)
+- Complex document layout
+- GPU underutilization
+- Network bottlenecks
+
+**Resolution Steps:**
+
+1. **Check processing time metrics**:
+```powershell
+# Open Grafana dashboard
+# http://localhost:3000/d/request-processing
+# Check P50, P95, P99 latencies
+```
+
+2. **Identify slow jobs**:
+```powershell
+# Check Temporal workflows
+# Open http://localhost:8080
+# Sort by duration, identify outliers
+```
+
+3. **Check GPU utilization**:
+```powershell
+docker exec -it extraction-service-triton-1 nvidia-smi
+# Look for GPU utilization % - should be 70-90% during processing
+```
+
+4. **Check parallel processing**:
+```powershell
+# Verify MAX_PARALLEL_REGIONS setting
+docker-compose -f docker\docker-compose.yml exec api-gateway env | findstr "MAX_PARALLEL"
+
+# Increase if GPU is underutilized
+MAX_PARALLEL_REGIONS=5
+```
+
+5. **Check preprocessing cache**:
+```powershell
+# Verify cache is enabled
+docker-compose -f docker\docker-compose.yml exec api-gateway env | findstr "CACHE"
+
+# Check Redis cache hit rate
+docker-compose -f docker\docker-compose.yml exec redis redis-cli INFO stats | findstr "keyspace"
+```
+
+6. **Profile slow documents**:
+```powershell
+# Enable detailed logging
+LOG_LEVEL=DEBUG
+
+# Process document and check logs
+docker-compose -f docker\docker-compose.yml logs -f glm-ocr-service
+```
+
+**Prevention:**
+- Set up alerts for P95 latency >30s
+- Monitor GPU utilization
+- Optimize parallel processing settings
+- Implement document size limits
+
+---
+
+#### Issue 5: High Error Rate
+
+**Symptoms:**
+- Error rate >10%
+- Many failed jobs in Temporal
+- Grafana shows high error rate
+
+**Root Causes:**
+- Invalid documents (corrupted PDFs)
+- Service instability
+- Configuration errors
+- Resource exhaustion
+
+**Resolution Steps:**
+
+1. **Check error metrics**:
+```powershell
+# Open Grafana dashboard
+# http://localhost:3000/d/request-processing
+# Check error rate and error types
+```
+
+2. **Analyze error logs**:
+```powershell
+# Check API Gateway errors
+docker-compose -f docker\docker-compose.yml logs api-gateway | findstr "ERROR"
+
+# Check GLM-OCR errors
+docker-compose -f docker\docker-compose.yml logs glm-ocr-service | findstr "ERROR"
+
+# Check Temporal Worker errors
+docker-compose -f docker\docker-compose.yml logs temporal-worker | findstr "ERROR"
+```
+
+3. **Identify error patterns**:
+```powershell
+# Group errors by type
+docker-compose -f docker\docker-compose.yml logs api-gateway | findstr "ERROR" | findstr "error_type"
+```
+
+4. **Check service health**:
+```powershell
+curl http://localhost:8000/health
+curl http://localhost:8002/health
+curl http://localhost:18000/v2/health/ready
+```
+
+5. **Restart unhealthy services**:
+```powershell
+docker-compose -f docker\docker-compose.yml restart <service-name>
+```
+
+6. **Check for resource exhaustion**:
+```powershell
+# Check memory usage
+docker stats
+
+# Check disk space
+docker system df
+```
+
+**Prevention:**
+- Set up error rate alerts (>10%)
+- Implement input validation
+- Monitor service health continuously
+- Set up automated service recovery
+
+---
+
+#### Issue 6: Database Connection Failures
+
+**Symptoms:**
+- "Failed to connect to database" errors
+- API Gateway fails to start
+- Job status queries fail
+
+**Root Causes:**
+- PostgreSQL not running
+- Network connectivity issues
+- Database credentials incorrect
+- Connection pool exhausted
+
+**Resolution Steps:**
+
+1. **Check PostgreSQL status**:
+```powershell
+docker-compose -f docker\docker-compose.yml ps db
+```
+
+2. **Check PostgreSQL logs**:
+```powershell
+docker-compose -f docker\docker-compose.yml logs db
+```
+
+3. **Restart PostgreSQL**:
+```powershell
+docker-compose -f docker\docker-compose.yml restart db
+# Wait 5 seconds
+docker-compose -f docker\docker-compose.yml restart api-gateway
+```
+
+4. **Test database connection**:
+```powershell
+docker-compose -f docker\docker-compose.yml exec db psql -U postgres -d idep -c "SELECT 1;"
+```
+
+5. **Check connection pool**:
+```powershell
+# Check active connections
+docker-compose -f docker\docker-compose.yml exec db psql -U postgres -d idep -c "SELECT count(*) FROM pg_stat_activity;"
+```
+
+6. **Verify credentials**:
+```powershell
+# Check .env file
+type .env | findstr "DB_"
+```
+
+**Prevention:**
+- Monitor database health
+- Set up connection pool monitoring
+- Configure connection pool limits appropriately
+- Set up database backups
+
+---
 
 ### Problem: "Failed to connect to database"
 ```powershell
@@ -456,7 +846,313 @@ docker-compose -f docker\docker-compose.yml logs -f <service-name>
 
 ---
 
-## 9. Stopping & Cleanup
+## 9. Monitoring and Alerting Procedures
+
+### Daily Monitoring Checklist
+
+Perform these checks daily to ensure system health:
+
+1. **Check Service Health**:
+```powershell
+# All services should be "Up (healthy)"
+docker-compose -f docker\docker-compose.yml ps
+```
+
+2. **Check Queue Status**:
+```powershell
+curl http://localhost:8000/queue/status
+# Queue length should be <20
+# Average wait time should be <30s
+```
+
+3. **Check GPU Health**:
+```powershell
+docker exec -it extraction-service-triton-1 nvidia-smi
+# GPU utilization should be 0-90%
+# Memory usage should be <90%
+# Temperature should be <85°C
+```
+
+4. **Check Error Rate**:
+```powershell
+# Open Grafana: http://localhost:3000/d/request-processing
+# Error rate should be <5%
+```
+
+5. **Check Processing Times**:
+```powershell
+# Open Grafana: http://localhost:3000/d/request-processing
+# P95 latency should be <20s
+```
+
+6. **Check Disk Space**:
+```powershell
+docker system df
+# Should have >20GB free
+```
+
+7. **Check Database Size**:
+```powershell
+docker-compose -f docker\docker-compose.yml exec db psql -U postgres -d idep -c "SELECT pg_size_pretty(pg_database_size('idep'));"
+```
+
+### Alert Response Procedures
+
+#### High GPU Memory Usage Alert (>90%)
+
+**Severity**: Warning  
+**Response Time**: 15 minutes
+
+**Actions**:
+1. Check current GPU memory usage
+2. Identify jobs using excessive memory
+3. Consider restarting Triton if memory leak suspected
+4. Review recent large documents
+5. Update documentation if new maximum document size identified
+
+#### Critical GPU Memory Usage Alert (>95%)
+
+**Severity**: Critical  
+**Response Time**: 5 minutes
+
+**Actions**:
+1. Immediately check GPU status
+2. Restart Triton to free memory
+3. Investigate root cause
+4. Update capacity planning if needed
+
+#### High Queue Length Alert (>40 jobs)
+
+**Severity**: Warning  
+**Response Time**: 30 minutes
+
+**Actions**:
+1. Check queue status and processing rate
+2. Identify any stuck jobs
+3. Check GPU utilization
+4. Consider temporarily increasing queue capacity
+5. Review capacity planning
+
+#### Queue Near Capacity Alert (>45 jobs)
+
+**Severity**: Critical  
+**Response Time**: 10 minutes
+
+**Actions**:
+1. Immediately check for stuck jobs
+2. Clear any stuck jobs
+3. Increase queue capacity temporarily
+4. Notify stakeholders of potential service degradation
+5. Escalate if issue persists
+
+#### High Error Rate Alert (>10%)
+
+**Severity**: Warning  
+**Response Time**: 15 minutes
+
+**Actions**:
+1. Check error logs for patterns
+2. Identify error types
+3. Check service health
+4. Restart unhealthy services
+5. Investigate root cause
+
+#### Critical Error Rate Alert (>25%)
+
+**Severity**: Critical  
+**Response Time**: 5 minutes
+
+**Actions**:
+1. Immediately check all service health
+2. Restart unhealthy services
+3. Check for infrastructure issues
+4. Notify stakeholders
+5. Escalate to engineering team
+
+#### Slow Processing Alert (P95 >30s)
+
+**Severity**: Warning  
+**Response Time**: 30 minutes
+
+**Actions**:
+1. Check GPU utilization
+2. Review recent documents for complexity
+3. Check parallel processing settings
+4. Review cache hit rate
+5. Optimize if needed
+
+### Monitoring Dashboard URLs
+
+| Dashboard | URL | Purpose |
+|-----------|-----|---------|
+| Grafana - GPU Monitoring | http://localhost:3000/d/gpu-monitoring | GPU memory, utilization |
+| Grafana - Queue Monitoring | http://localhost:3000/d/queue-monitoring | Queue length, wait times |
+| Grafana - Request Processing | http://localhost:3000/d/request-processing | Latency, error rates |
+| Prometheus | http://localhost:9090 | Raw metrics, alerts |
+| Jaeger | http://localhost:16686 | Distributed tracing |
+| Temporal UI | http://localhost:8080 | Workflow execution |
+
+### Metrics to Monitor
+
+#### GPU Metrics
+- `gpu_memory_allocated_gb`: Current GPU memory in use
+- `gpu_memory_free_gb`: Available GPU memory
+- `nv_gpu_utilization`: GPU utilization percentage
+- `nv_gpu_memory_used_bytes`: GPU memory used (from Triton)
+
+#### Queue Metrics
+- `queue_length`: Current queue length
+- `queue_processing_count`: Jobs being processed
+- `queue_avg_wait_time_seconds`: Average wait time
+- `queue_avg_processing_time_seconds`: Average processing time
+- `queue_throughput_per_hour`: Jobs per hour
+
+#### Request Metrics
+- `extraction_requests_total`: Total requests (by status)
+- `extraction_duration_seconds`: Processing time histogram
+- `idep_http_requests_total`: HTTP requests (by endpoint, status)
+- `idep_http_request_duration_seconds`: HTTP latency histogram
+
+#### System Metrics
+- `process_resident_memory_bytes`: Service memory usage
+- `process_cpu_seconds_total`: Service CPU usage
+- `go_goroutines`: Active goroutines (Go services)
+
+---
+
+## 10. Scaling and Capacity Planning
+
+### Current Capacity
+
+**Single GPU Node (RTX 2050)**:
+- **Throughput**: ~100-150 documents/hour (depends on document size)
+- **Concurrent Processing**: 1 GPU inference + 3 parallel pages
+- **Queue Capacity**: 50 pending jobs
+- **GPU Memory**: 4GB VRAM
+- **Processing Time**: 
+  - Small documents (<1MB, 1-5 pages): 5-10 seconds
+  - Medium documents (1-5MB, 5-10 pages): 15-30 seconds
+  - Large documents (5-10MB, 10-20 pages): 30-60 seconds
+
+### Scaling Strategies
+
+#### Vertical Scaling (Upgrade GPU)
+
+**Option 1: Upgrade to RTX 3060 (12GB VRAM)**
+- **Benefits**: 
+  - 3x more GPU memory
+  - Can process larger documents
+  - Can increase batch size
+- **Throughput Increase**: ~50% (150-225 docs/hour)
+- **Cost**: ~$400-500
+
+**Option 2: Upgrade to RTX 4070 (12GB VRAM)**
+- **Benefits**:
+  - 3x more GPU memory
+  - Faster inference (newer architecture)
+  - Better power efficiency
+- **Throughput Increase**: ~100% (200-300 docs/hour)
+- **Cost**: ~$600-700
+
+#### Horizontal Scaling (Multiple GPU Nodes)
+
+**Option 1: Add Second GPU Node**
+- **Setup**: Deploy second instance with same configuration
+- **Load Balancing**: Use nginx or HAProxy
+- **Throughput**: 2x (200-300 docs/hour)
+- **Complexity**: Medium (need load balancer, shared Redis/DB)
+
+**Option 2: Kubernetes Cluster**
+- **Setup**: Deploy on Kubernetes with multiple GPU nodes
+- **Auto-scaling**: Scale based on queue length
+- **Throughput**: 3-5x (300-750 docs/hour)
+- **Complexity**: High (need K8s expertise, GPU operator)
+
+### Capacity Planning Guidelines
+
+#### When to Scale
+
+**Scale Up (Vertical) When**:
+- GPU memory usage consistently >80%
+- Processing large documents frequently
+- Single node is sufficient for throughput needs
+
+**Scale Out (Horizontal) When**:
+- Queue length consistently >30
+- Throughput needs exceed single GPU capacity
+- Need high availability / redundancy
+
+#### Capacity Calculation
+
+**Formula**:
+```
+Required Capacity = (Peak Requests/Hour) / (Throughput/Hour) * Safety Factor
+
+Safety Factor = 1.5 (50% headroom)
+```
+
+**Example**:
+- Peak: 200 requests/hour
+- Current throughput: 100 docs/hour
+- Required capacity: 200 / 100 * 1.5 = 3 nodes
+
+#### Cost-Benefit Analysis
+
+| Option | Cost | Throughput | Complexity | Recommendation |
+|--------|------|------------|------------|----------------|
+| Current (RTX 2050) | $0 | 100-150/hr | Low | <150 docs/hr |
+| Upgrade to RTX 3060 | $400 | 150-225/hr | Low | 150-200 docs/hr |
+| Upgrade to RTX 4070 | $600 | 200-300/hr | Low | 200-250 docs/hr |
+| Add 2nd Node | $1000 | 200-300/hr | Medium | 250-400 docs/hr |
+| K8s Cluster (3 nodes) | $2000+ | 300-750/hr | High | >400 docs/hr |
+
+### Performance Optimization
+
+Before scaling, consider these optimizations:
+
+1. **Enable Preprocessing Cache**:
+```bash
+CACHE_LAYOUT_RESULTS=true
+LAYOUT_CACHE_TTL_SECONDS=3600
+```
+- **Impact**: 20-30% throughput increase for repeated documents
+
+2. **Optimize Parallel Processing**:
+```bash
+MAX_PARALLEL_REGIONS=5  # Increase if GPU underutilized
+```
+- **Impact**: 10-20% throughput increase
+
+3. **Implement Request Prioritization**:
+- Process small documents first
+- **Impact**: Reduced average wait time
+
+4. **Optimize Model Inference**:
+- Use FP16 precision (if accuracy acceptable)
+- **Impact**: 30-40% faster inference
+
+5. **Implement Document Size Limits**:
+```bash
+MAX_DOCUMENT_SIZE_MB=10
+MAX_PAGES=20
+```
+- **Impact**: Prevents resource exhaustion
+
+### Monitoring for Capacity Planning
+
+Track these metrics over time:
+
+1. **Peak Request Rate**: Requests per hour during peak times
+2. **Average Processing Time**: By document size
+3. **Queue Length**: Maximum and average
+4. **GPU Utilization**: Percentage during processing
+5. **Error Rate**: Percentage of failed requests
+
+**Review Frequency**: Monthly or when traffic increases >20%
+
+---
+
+## 11. Stopping & Cleanup
 
 ### Stop All Services
 ```powershell

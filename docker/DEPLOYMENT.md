@@ -159,10 +159,361 @@ LAYOUT_CACHE_TTL_SECONDS=3600    # Cache TTL (1 hour)
 MAX_PARALLEL_REGIONS=5           # Max parallel region processing
 ```
 
+**Redis Queue Configuration:**
+```bash
+REDIS_HOST=redis                 # Redis hostname
+REDIS_PORT=6379                  # Redis port
+REDIS_DB=0                       # Redis database number
+REDIS_PASSWORD=                  # Redis password (leave empty for no auth)
+QUEUE_MAX_LENGTH=50              # Maximum queue capacity
+QUEUE_GPU_LOCK_TTL_SECONDS=600   # GPU lock timeout (10 minutes)
+```
+
 **Circuit Breaker:**
 ```bash
 CIRCUIT_BREAKER_THRESHOLD=5      # Failures before opening circuit
 CIRCUIT_BREAKER_TIMEOUT_SECONDS=60  # Recovery timeout
+```
+
+### Triton Configuration Changes
+
+The Triton Inference Server requires specific configuration for production stability:
+
+#### docker-compose.yml Configuration
+
+```yaml
+triton:
+  image: nvcr.io/nvidia/tritonserver:23.10-py3
+  container_name: extraction-service-triton-1
+  command:
+    - bash
+    - -c
+    - |
+      export LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH
+      pip install --no-deps --force-reinstall safetensors==0.4.5 numpy==1.26.4 2>/dev/null
+      exec tritonserver --model-repository=/models \
+        --allow-gpu-metrics=true \
+        --log-verbose=1 \
+        --backend-config=python,shm-default-byte-size=8388608 \
+        --backend-config=python,shm-growth-byte-size=8388608 \
+        --backend-config=python,stub-timeout-seconds=600 \
+        --backend-config=python,stub-health-check-interval-seconds=30
+  shm_size: '4g'
+  environment:
+    - CUDA_LAUNCH_BLOCKING=1
+    - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+  volumes:
+    - ../services/triton-models:/models
+  ports:
+    - "18000:8000"  # HTTP
+    - "18001:8001"  # gRPC
+    - "18002:8002"  # Metrics
+  networks:
+    - idep-network
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 120s
+```
+
+#### Key Triton Parameters Explained
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `stub-timeout-seconds` | 600 | Allows up to 10 minutes for large document processing without stub becoming unhealthy |
+| `shm-default-byte-size` | 8388608 | 8MB shared memory (increased from 4MB default) for larger model tensors |
+| `shm-growth-byte-size` | 8388608 | Shared memory growth increment |
+| `stub-health-check-interval-seconds` | 30 | More frequent health checks to detect issues faster |
+| `shm_size` | 4g | Docker shared memory size for inter-process communication |
+| `CUDA_LAUNCH_BLOCKING` | 1 | Synchronous CUDA operations for better error reporting |
+| `PYTORCH_CUDA_ALLOC_CONF` | max_split_size_mb:512 | Prevents GPU memory fragmentation |
+
+#### Why These Settings Matter
+
+1. **Stub Timeout (600s)**: Large documents (>5MB, 10+ pages) can take several minutes to process. The default 60s timeout causes the Python backend stub to be marked unhealthy and restarted, interrupting processing.
+
+2. **Shared Memory (8MB)**: The GLM-OCR model uses shared memory to pass tensors between processes. Insufficient shared memory causes cryptic errors.
+
+3. **GPU Memory Management**: The `PYTORCH_CUDA_ALLOC_CONF` setting prevents memory fragmentation that can cause out-of-memory errors even when sufficient memory is available.
+
+4. **Health Check Interval (30s)**: More frequent checks allow faster detection of stub process issues.
+
+### Redis Setup and Configuration
+
+Redis is used for request queueing and GPU lock management.
+
+#### docker-compose.yml Configuration
+
+```yaml
+redis:
+  image: redis:7-alpine
+  container_name: extraction-service-redis-1
+  command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru
+  ports:
+    - "6379:6379"
+  volumes:
+    - redis-data:/data
+  networks:
+    - idep-network
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+```
+
+#### Redis Data Structures
+
+The queue system uses the following Redis data structures:
+
+| Key Pattern | Type | Purpose |
+|-------------|------|---------|
+| `queue:pending` | Sorted Set | Pending jobs ordered by priority and timestamp |
+| `queue:processing` | Hash | Currently processing jobs with metadata |
+| `queue:status:{jobID}` | Hash | Job status, timestamps, and metadata |
+| `lock:gpu` | String | Distributed lock for GPU access (TTL: 600s) |
+| `metrics:queue_length` | Counter | Current queue length for monitoring |
+| `metrics:total_enqueued` | Counter | Total jobs enqueued |
+| `metrics:total_completed` | Counter | Total jobs completed |
+
+#### Redis Memory Configuration
+
+- **Max Memory**: 2GB (sufficient for ~10,000 queued jobs)
+- **Eviction Policy**: `allkeys-lru` (least recently used eviction)
+- **Persistence**: RDB snapshots to `/data` volume
+
+#### Redis Monitoring
+
+Monitor Redis health and performance:
+
+```bash
+# Check Redis connection
+docker-compose exec redis redis-cli ping
+
+# View queue length
+docker-compose exec redis redis-cli ZCARD queue:pending
+
+# View processing jobs
+docker-compose exec redis redis-cli HLEN queue:processing
+
+# View GPU lock status
+docker-compose exec redis redis-cli GET lock:gpu
+
+# Monitor memory usage
+docker-compose exec redis redis-cli INFO memory
+```
+
+### Monitoring Setup (Prometheus, Grafana, Jaeger)
+
+The system includes comprehensive monitoring infrastructure.
+
+#### Prometheus Configuration
+
+**File**: `docker/prometheus.yml`
+
+```yaml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'idep-production'
+    environment: 'production'
+
+rule_files:
+  - '/etc/prometheus/prometheus-alerts.yml'
+
+scrape_configs:
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:8000']
+    metrics_path: '/metrics'
+
+  - job_name: 'glm-ocr-service'
+    static_configs:
+      - targets: ['glm-ocr-service:8002']
+    metrics_path: '/metrics'
+
+  - job_name: 'triton'
+    static_configs:
+      - targets: ['triton:8002']
+    metrics_path: '/metrics'
+
+  - job_name: 'temporal'
+    static_configs:
+      - targets: ['temporal:8080']
+    metrics_path: '/metrics'
+```
+
+#### Grafana Configuration
+
+**Datasource**: `docker/grafana/provisioning/datasources/prometheus.yml`
+
+```yaml
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+```
+
+**Dashboard Provider**: `docker/grafana/provisioning/dashboards/dashboards.yml`
+
+```yaml
+apiVersion: 1
+
+providers:
+  - name: 'default'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+```
+
+#### Jaeger Configuration
+
+Jaeger is configured for distributed tracing across all services.
+
+**docker-compose.yml**:
+
+```yaml
+jaeger:
+  image: jaegertracing/all-in-one:1.50
+  container_name: extraction-service-jaeger-1
+  environment:
+    - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+    - COLLECTOR_OTLP_ENABLED=true
+  ports:
+    - "16686:16686"  # Jaeger UI
+    - "14268:14268"  # Jaeger collector HTTP
+    - "14250:14250"  # Jaeger collector gRPC
+    - "6831:6831/udp"  # Jaeger agent
+  networks:
+    - idep-network
+```
+
+**Service Configuration**:
+
+All services are configured to send traces to Jaeger:
+
+```bash
+# Environment variables for all services
+JAEGER_AGENT_HOST=jaeger
+JAEGER_AGENT_PORT=6831
+JAEGER_SAMPLER_TYPE=const
+JAEGER_SAMPLER_PARAM=1
+JAEGER_SERVICE_NAME=<service-name>
+```
+
+#### Monitoring Verification
+
+After deployment, verify monitoring is working:
+
+```bash
+# Run verification script
+./docker/verify-monitoring.sh
+
+# Or manually check:
+
+# 1. Prometheus targets
+curl http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health}'
+
+# 2. Grafana datasource
+curl -u admin:idep-admin http://localhost:3000/api/datasources
+
+# 3. Jaeger health
+curl http://localhost:16686/
+
+# 4. Check metrics are being collected
+curl http://localhost:8000/metrics | grep idep_
+curl http://localhost:8002/metrics | grep gpu_
+curl http://localhost:18002/metrics | grep nv_
+```
+
+#### Alert Configuration
+
+Alerts are defined in `docker/prometheus-alerts.yml`:
+
+```yaml
+groups:
+  - name: gpu_alerts
+    interval: 30s
+    rules:
+      - alert: HighGPUMemoryUsage
+        expr: gpu_memory_allocated_gb / (gpu_memory_allocated_gb + gpu_memory_free_gb) > 0.9
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High GPU memory usage detected"
+          description: "GPU memory usage is above 90% for 2 minutes"
+
+      - alert: CriticalGPUMemoryUsage
+        expr: gpu_memory_allocated_gb / (gpu_memory_allocated_gb + gpu_memory_free_gb) > 0.95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical GPU memory usage"
+          description: "GPU memory usage is above 95%"
+
+  - name: queue_alerts
+    interval: 30s
+    rules:
+      - alert: HighQueueLength
+        expr: queue_length > 40
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue length is high"
+          description: "Queue has more than 40 pending jobs for 5 minutes"
+
+      - alert: QueueNearCapacity
+        expr: queue_length > 45
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Queue near capacity"
+          description: "Queue is near maximum capacity (50 jobs)"
+
+  - name: request_alerts
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: rate(extraction_requests_total{status="error"}[5m]) / rate(extraction_requests_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is above 10% for 5 minutes"
+
+      - alert: SlowProcessing
+        expr: histogram_quantile(0.95, rate(extraction_duration_seconds_bucket[5m])) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow processing detected"
+          description: "P95 processing time is above 30 seconds"
 ```
 
 ### Development vs Production
