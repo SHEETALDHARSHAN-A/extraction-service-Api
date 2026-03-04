@@ -123,12 +123,23 @@ class GLMInferenceEngine:
             # Generate
             import torch
             with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=max_tokens,
-                    do_sample=False,
-                    num_beams=1
-                )
+                try:
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=max_tokens,
+                        do_sample=False,
+                        num_beams=1
+                    )
+                except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+                    error_str = str(e).lower()
+                    if "out of memory" in error_str or "cuda" in error_str:
+                        logger.error(f"CUDA out-of-memory during inference: {e}")
+                        # Clear cache and re-raise
+                        torch.cuda.empty_cache()
+                        raise torch.cuda.OutOfMemoryError(
+                            f"CUDA out of memory during inference: {e}"
+                        )
+                    raise
             
             # Decode output
             generated_text = self.processor.batch_decode(

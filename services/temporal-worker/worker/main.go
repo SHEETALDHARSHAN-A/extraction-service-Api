@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/user/idep/temporal-worker/app"
 	"github.com/user/idep/temporal-worker/config"
 	"go.temporal.io/sdk/client"
@@ -26,6 +28,13 @@ func main() {
 		MaxConcurrentWorkflowTaskExecutionSize: 10,
 	})
 
+	// Create Redis client for queue operations
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%s", cfg.RedisHost, cfg.RedisPort),
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
+	})
+
 	// Register workflow
 	w.RegisterWorkflow(app.DocumentProcessingWorkflow)
 
@@ -42,6 +51,10 @@ func main() {
 		MinioBucket:        cfg.MinioBucket,
 	}
 	w.RegisterActivity(activities)
+
+	// Register queue activities
+	queueActivities := app.NewQueueActivities(redisClient)
+	w.RegisterActivity(queueActivities)
 
 	log.Printf("🚀 Temporal Worker starting on queue: %s", cfg.TaskQueue)
 	err = w.Run(worker.InterruptCh())

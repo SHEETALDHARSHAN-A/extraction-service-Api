@@ -26,6 +26,7 @@ type Config struct {
 	ServiceRetryAttempts    int
 	CircuitBreakerThreshold int
 	CircuitBreakerTimeout   int
+	JaegerEndpoint          string
 }
 
 func Load() *Config {
@@ -50,6 +51,7 @@ func Load() *Config {
 		ServiceRetryAttempts:    getEnvInt("SERVICE_RETRY_ATTEMPTS", 3),
 		CircuitBreakerThreshold: getEnvInt("CIRCUIT_BREAKER_THRESHOLD", 5),
 		CircuitBreakerTimeout:   getEnvInt("CIRCUIT_BREAKER_TIMEOUT", 60),
+		JaegerEndpoint:          getEnv("JAEGER_AGENT_ENDPOINT", "localhost:6831"),
 	}
 }
 

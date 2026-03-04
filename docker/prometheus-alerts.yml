@@ -1,0 +1,99 @@
+groups:
+  - name: gpu_alerts
+    interval: 30s
+    rules:
+      - alert: HighGPUMemoryUsage
+        expr: (gpu_memory_allocated_gb / (gpu_memory_allocated_gb + gpu_memory_free_gb)) * 100 > 90
+        for: 2m
+        labels:
+          severity: warning
+          component: gpu
+        annotations:
+          summary: "High GPU memory usage detected"
+          description: "GPU memory usage is above 90% (current: {{ $value }}%)"
+
+      - alert: CriticalGPUMemoryUsage
+        expr: (gpu_memory_allocated_gb / (gpu_memory_allocated_gb + gpu_memory_free_gb)) * 100 > 95
+        for: 1m
+        labels:
+          severity: critical
+          component: gpu
+        annotations:
+          summary: "Critical GPU memory usage detected"
+          description: "GPU memory usage is above 95% (current: {{ $value }}%)"
+
+      - alert: LowGPUMemoryAvailable
+        expr: gpu_memory_free_gb < 0.5
+        for: 2m
+        labels:
+          severity: warning
+          component: gpu
+        annotations:
+          summary: "Low GPU memory available"
+          description: "Less than 0.5GB GPU memory available (current: {{ $value }}GB)"
+
+  - name: queue_alerts
+    interval: 30s
+    rules:
+      - alert: HighQueueLength
+        expr: queue_length > 40
+        for: 5m
+        labels:
+          severity: warning
+          component: queue
+        annotations:
+          summary: "High queue length detected"
+          description: "Queue length is above 40 (current: {{ $value }})"
+
+      - alert: QueueNearCapacity
+        expr: queue_length > 45
+        for: 2m
+        labels:
+          severity: critical
+          component: queue
+        annotations:
+          summary: "Queue near capacity"
+          description: "Queue length is above 45, approaching max capacity of 50 (current: {{ $value }})"
+
+      - alert: HighAverageWaitTime
+        expr: queue_avg_wait_time_seconds > 120
+        for: 5m
+        labels:
+          severity: warning
+          component: queue
+        annotations:
+          summary: "High average wait time"
+          description: "Average queue wait time is above 2 minutes (current: {{ $value }}s)"
+
+  - name: request_alerts
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: (sum(rate(extraction_requests_total{status="error"}[5m])) / sum(rate(extraction_requests_total[5m]))) * 100 > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: extraction
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is above 10% (current: {{ $value }}%)"
+
+      - alert: CriticalErrorRate
+        expr: (sum(rate(extraction_requests_total{status="error"}[5m])) / sum(rate(extraction_requests_total[5m]))) * 100 > 25
+        for: 2m
+        labels:
+          severity: critical
+          component: extraction
+        annotations:
+          summary: "Critical error rate detected"
+          description: "Error rate is above 25% (current: {{ $value }}%)"
+
+      - alert: SlowProcessingTime
+        expr: histogram_quantile(0.95, sum(rate(extraction_duration_seconds_bucket[5m])) by (le)) > 30
+        for: 5m
+        labels:
+          severity: warning
+          component: extraction
+        annotations:
+          summary: "Slow processing time detected"
+          description: "95th percentile processing time is above 30 seconds (current: {{ $value }}s)"

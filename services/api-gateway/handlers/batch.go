@@ -52,6 +52,27 @@ func (h *BatchUploadHandler) Handle(c *gin.Context) {
 		return
 	}
 
+	// Validate document sizes - max 10MB per document
+	const maxDocumentSize = 10 * 1024 * 1024 // 10MB in bytes
+	for _, hdr := range files {
+		if hdr.Size > maxDocumentSize {
+			maxSizeMB := float64(maxDocumentSize) / (1024 * 1024)
+			providedSizeMB := float64(hdr.Size) / (1024 * 1024)
+			
+			log.Printf("❌ Document too large in batch: %s (%.2fMB) exceeds maximum of %.2fMB",
+				hdr.Filename, providedSizeMB, maxSizeMB)
+			
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+				"error":            "Document too large",
+				"filename":         hdr.Filename,
+				"max_size_mb":      maxSizeMB,
+				"provided_size_mb": providedSizeMB,
+				"message":          fmt.Sprintf("Document '%s' size (%.2fMB) exceeds maximum allowed size of %.2fMB", hdr.Filename, providedSizeMB, maxSizeMB),
+			})
+			return
+		}
+	}
+
 	// Parse options from form (same params as single upload)
 	outputFormats := c.DefaultPostForm("output_formats", "text")
 	customPrompt := c.DefaultPostForm("prompt", "")

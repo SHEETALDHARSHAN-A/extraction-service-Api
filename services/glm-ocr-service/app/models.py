@@ -4,6 +4,41 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, validator
 
 
+class ExtractionOptions(BaseModel):
+    """Options for extraction granularity and output format."""
+    
+    granularity: str = Field(
+        default="block",
+        description="Granularity level: block, line, or word"
+    )
+    output_format: str = Field(
+        default="text",
+        description="Output format: text, json, markdown, table, key_value, or structured"
+    )
+    include_coordinates: bool = Field(
+        default=True,
+        description="Include bounding box coordinates in output"
+    )
+    include_confidence: bool = Field(
+        default=True,
+        description="Include confidence scores in output"
+    )
+    
+    @validator("granularity")
+    def validate_granularity(cls, v):
+        valid_levels = ["block", "line", "word"]
+        if v.lower() not in valid_levels:
+            raise ValueError(f"granularity must be one of {valid_levels}")
+        return v.lower()
+    
+    @validator("output_format")
+    def validate_output_format(cls, v):
+        valid_formats = ["text", "json", "markdown", "table", "key_value", "structured"]
+        if v.lower() not in valid_formats:
+            raise ValueError(f"output_format must be one of {valid_formats}")
+        return v.lower()
+
+
 class RegionExtractionRequest(BaseModel):
     """Request model for single region extraction."""
     
@@ -33,6 +68,24 @@ class TokenUsage(BaseModel):
     completion: int = Field(0, description="Number of completion tokens")
 
 
+class WordBoundingBox(BaseModel):
+    """Word-level bounding box."""
+    
+    word: str = Field(..., description="Word text")
+    bbox: List[int] = Field(..., description="Bounding box [x, y, width, height]")
+    confidence: float = Field(..., description="Confidence score")
+
+
+class KeyValuePair(BaseModel):
+    """Key-value pair with bounding boxes."""
+    
+    key: str = Field(..., description="Key text")
+    key_bbox: List[int] = Field(..., description="Key bounding box [x, y, width, height]")
+    value: str = Field(..., description="Value text")
+    value_bbox: List[int] = Field(..., description="Value bounding box [x, y, width, height]")
+    confidence: float = Field(..., description="Confidence score")
+
+
 class RegionExtractionResponse(BaseModel):
     """Response model for single region extraction."""
     
@@ -40,6 +93,11 @@ class RegionExtractionResponse(BaseModel):
     confidence: float = Field(..., description="Confidence score")
     processing_time_ms: int = Field(..., description="Processing time in milliseconds")
     tokens_used: TokenUsage = Field(default_factory=TokenUsage, description="Token usage statistics")
+    gpu_memory_used_gb: Optional[float] = Field(None, description="GPU memory used in GB")
+    word_boxes: Optional[List[WordBoundingBox]] = Field(None, description="Word-level bounding boxes")
+    key_value_pairs: Optional[List[KeyValuePair]] = Field(None, description="Key-value pairs with bounding boxes")
+    bounding_boxes: Optional[List[Dict[str, Any]]] = Field(None, description="General bounding boxes for other granularities")
+    validation_warnings: Optional[List[Dict[str, Any]]] = Field(None, description="Validation warnings for extraction results")
 
 
 class BatchRegionRequest(BaseModel):
@@ -88,6 +146,7 @@ class BatchRegionExtractionResponse(BaseModel):
     results: List[BatchRegionResult] = Field(..., description="Results for each region")
     total_processing_time_ms: int = Field(..., description="Total processing time in milliseconds")
     tokens_used: TokenUsage = Field(default_factory=TokenUsage, description="Total token usage")
+    gpu_memory_used_gb: Optional[float] = Field(None, description="GPU memory used in GB")
 
 
 class HealthResponse(BaseModel):
@@ -100,6 +159,7 @@ class HealthResponse(BaseModel):
     model_loaded: bool = Field(..., description="Whether the model is loaded")
     gpu_available: bool = Field(..., description="Whether GPU is available")
     device: str = Field(..., description="Device being used: cuda or cpu")
+    gpu_memory_stats: Optional[Dict[str, float]] = Field(None, description="GPU memory statistics")
 
 
 class ErrorResponse(BaseModel):

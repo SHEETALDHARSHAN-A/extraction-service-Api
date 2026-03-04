@@ -8,8 +8,10 @@ require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.0.98
+	github.com/opentracing/opentracing-go v1.2.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.18.0
+	github.com/uber/jaeger-client-go v2.30.0+incompatible
 	go.temporal.io/sdk v1.40.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1

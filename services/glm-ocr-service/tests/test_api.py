@@ -5,8 +5,27 @@ import base64
 from io import BytesIO
 from PIL import Image
 from fastapi.testclient import TestClient
+from unittest.mock import Mock, patch
 
 from app.main import app
+from app import main as main_module
+
+# Mock the inference engine and GPU monitor before creating the test client
+mock_inference_engine = Mock()
+mock_inference_engine.is_ready.return_value = True
+mock_inference_engine.device = "cpu"
+mock_inference_engine.extract_content.return_value = ("Extracted content", 0.95, 100, 200)
+mock_inference_engine.cleanup = Mock()
+
+mock_gpu_monitor = Mock()
+mock_gpu_monitor.gpu_available = False  # Disable GPU checks for tests
+mock_gpu_monitor.has_sufficient_memory.return_value = True
+mock_gpu_monitor.get_memory_stats.return_value = {"free_gb": 10.0}
+mock_gpu_monitor.log_memory_usage = Mock()
+
+# Patch the global variables
+main_module.inference_engine = mock_inference_engine
+main_module.gpu_monitor = mock_gpu_monitor
 
 client = TestClient(app)
 

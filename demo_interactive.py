@@ -25,7 +25,7 @@ import sys
 
 DEMO_CONFIG = {
     "company_name": "IDEP Document Intelligence",
-    "presenter": "Your Name",  # ← CHANGE THIS
+    "presenter": "Sheetal",
     "demo_version": "v2.0",
 }
 

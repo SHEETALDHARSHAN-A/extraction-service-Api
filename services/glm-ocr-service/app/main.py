@@ -2,13 +2,17 @@
 
 import time
 import logging
+import logging.config
 import uuid
+import json
+import os
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 from .config import settings
 from .models import (
@@ -19,31 +23,256 @@ from .models import (
     BatchRegionResult,
     HealthResponse,
     ErrorResponse,
-    TokenUsage
+    TokenUsage,
+    ExtractionOptions,
+    WordBoundingBox,
+    KeyValuePair
 )
 from .prompts import get_prompt_for_region_type
 from .glm_inference import GLMInferenceEngine
+from .gpu_monitor import GPUMonitor
+from .extractors import WordLevelExtractor, KeyValueExtractor
+from .validators import ExtractionValidator
+from .error_logger import (
+    log_structured_error,
+    log_gpu_memory_error,
+    log_model_unavailable_error,
+    log_inference_error
+)
+from .tracing import (
+    init_jaeger_tracer,
+    extract_span_context,
+    start_span,
+    set_span_tag,
+    log_span_error,
+    finish_span,
+    get_trace_id
+)
+from .preprocessing_cache import PreprocessingCache
+from .performance_monitor import PerformanceMonitor
 
+# Configure structured JSON logging
+class JSONFormatter(logging.Formatter):
+    """Custom JSON formatter for structured logging."""
+    
+    def format(self, record):
+        log_entry = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record.created)),
+            "level": record.levelname,
+            "service": "glm-ocr-service",
+            "message": record.getMessage(),
+        }
+        
+        # Add request_id if available
+        if hasattr(record, 'request_id'):
+            log_entry["request_id"] = record.request_id
+        
+        # Add extra context if available
+        if hasattr(record, 'context'):
+            log_entry["context"] = record.context
+        
+        # Add exception info if present
+        if record.exc_info:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        
+        return json.dumps(log_entry)
+
+# Configure logging
+logging_config = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "()": JSONFormatter
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "json",
+            "stream": "ext://sys.stdout"
+        }
+    },
+    "root": {
+        "level": settings.log_level.upper(),
+        "handlers": ["console"]
+    }
+}
+
+logging.config.dictConfig(logging_config)
 logger = logging.getLogger(__name__)
 
-# Global inference engine
+
+def log_extraction_request(request_id: str, status: str, document_size: int = None, 
+                          processing_time_ms: int = None, context: Dict[str, Any] = None,
+                          trace_id: str = None):
+    """
+    Log extraction request with standard fields.
+    
+    Args:
+        request_id: Request ID for tracing
+        status: Request status (started, completed, failed)
+        document_size: Size of document in bytes
+        processing_time_ms: Processing time in milliseconds
+        context: Additional context information
+        trace_id: Distributed trace ID
+    """
+    log_context = context or {}
+    
+    if document_size is not None:
+        log_context["document_size"] = document_size
+    
+    if processing_time_ms is not None:
+        log_context["processing_time_ms"] = processing_time_ms
+    
+    log_context["status"] = status
+    
+    if trace_id:
+        log_context["trace_id"] = trace_id
+    
+    message = f"Extraction request {status}"
+    
+    log_record = logger.makeRecord(
+        logger.name, logging.INFO, "", 0,
+        message, (), None
+    )
+    log_record.request_id = request_id
+    log_record.context = log_context
+    logger.handle(log_record)
+
+# Prometheus metrics
+gpu_memory_allocated = Gauge('gpu_memory_allocated_gb', 'GPU memory allocated in GB')
+gpu_memory_free = Gauge('gpu_memory_free_gb', 'GPU memory free in GB')
+gpu_memory_total = Gauge('gpu_memory_total_gb', 'Total GPU memory in GB')
+gpu_memory_utilization = Gauge('gpu_memory_utilization_percent', 'GPU memory utilization percentage')
+
+extraction_requests_total = Counter('extraction_requests_total', 'Total extraction requests', ['endpoint', 'status'])
+extraction_duration_seconds = Histogram('extraction_duration_seconds', 'Extraction request duration', ['endpoint'])
+extraction_tokens_total = Counter('extraction_tokens_total', 'Total tokens used', ['type'])
+
+# Global inference engine and GPU monitor
 inference_engine: GLMInferenceEngine = None
+gpu_monitor: GPUMonitor = None
+word_extractor: WordLevelExtractor = None
+kv_extractor: KeyValueExtractor = None
+validator: ExtractionValidator = None
+preprocessing_cache: PreprocessingCache = None
+performance_monitor: PerformanceMonitor = None
 service_start_time = time.time()
+jaeger_tracer = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown."""
-    global inference_engine
+    global inference_engine, gpu_monitor, word_extractor, kv_extractor, validator, preprocessing_cache, performance_monitor, jaeger_tracer
     
     # Startup
     logger.info(f"Starting {settings.service_name} v{settings.service_version}")
+    
+    # Initialize Jaeger tracer
+    try:
+        jaeger_host = os.getenv("JAEGER_AGENT_HOST", "localhost")
+        jaeger_port = int(os.getenv("JAEGER_AGENT_PORT", "6831"))
+        jaeger_tracer = init_jaeger_tracer(
+            service_name=settings.service_name,
+            jaeger_host=jaeger_host,
+            jaeger_port=jaeger_port
+        )
+        if jaeger_tracer:
+            logger.info("Jaeger tracer initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Jaeger tracer: {e}")
+    
+    # Initialize GPU monitor
+    try:
+        gpu_monitor = GPUMonitor()
+        logger.info("GPU monitor initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize GPU monitor: {e}")
+    
+    # Initialize extractors
+    try:
+        word_extractor = WordLevelExtractor()
+        kv_extractor = KeyValueExtractor()
+        logger.info("Extractors initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize extractors: {e}")
+    
+    # Initialize validator
+    try:
+        validator = ExtractionValidator()
+        logger.info("Validator initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize validator: {e}")
+    
+    # Initialize preprocessing cache
+    try:
+        cache_size_mb = int(os.getenv("PREPROCESSING_CACHE_SIZE_MB", "500"))
+        cache_ttl_seconds = int(os.getenv("PREPROCESSING_CACHE_TTL_SECONDS", "3600"))
+        preprocessing_cache = PreprocessingCache(
+            max_size_mb=cache_size_mb,
+            ttl_seconds=cache_ttl_seconds
+        )
+        logger.info(f"Preprocessing cache initialized: size={cache_size_mb}MB, ttl={cache_ttl_seconds}s")
+    except Exception as e:
+        logger.error(f"Failed to initialize preprocessing cache: {e}")
+    
+    # Initialize performance monitor
+    try:
+        slow_threshold_ms = int(os.getenv("SLOW_PAGE_THRESHOLD_MS", "30000"))
+        performance_monitor = PerformanceMonitor(
+            slow_page_threshold_ms=slow_threshold_ms,
+            history_size=1000
+        )
+        logger.info(f"Performance monitor initialized: slow_threshold={slow_threshold_ms}ms")
+    except Exception as e:
+        logger.error(f"Failed to initialize performance monitor: {e}")
+    
+    # Initialize inference engine
     try:
         inference_engine = GLMInferenceEngine(
             model_path=settings.glm_model_path,
             precision_mode=settings.glm_precision_mode
         )
         logger.info("GLM-OCR inference engine initialized")
+        
+        if gpu_monitor:
+            gpu_monitor.log_memory_usage("after model load")
+        
+        # Model warmup: run dummy inference to reduce first-request latency
+        try:
+            logger.info("Starting model warmup...")
+            warmup_start = time.time()
+            
+            # Create a small dummy image (1x1 pixel base64 encoded)
+            import base64
+            from PIL import Image
+            import io
+            
+            # Create a tiny test image
+            dummy_img = Image.new('RGB', (100, 100), color='white')
+            buffer = io.BytesIO()
+            dummy_img.save(buffer, format='PNG')
+            dummy_image_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            
+            # Run dummy inference
+            _, _, _, _ = inference_engine.extract_content(
+                image_base64=dummy_image_b64,
+                prompt="Extract text",
+                max_tokens=10,
+                output_format="text"
+            )
+            
+            warmup_time = time.time() - warmup_start
+            logger.info(f"Model warmup completed in {warmup_time:.2f}s")
+            
+            if gpu_monitor:
+                gpu_monitor.log_memory_usage("after model warmup")
+        
+        except Exception as warmup_error:
+            logger.warning(f"Model warmup failed (non-critical): {warmup_error}")
+    
     except Exception as e:
         logger.error(f"Failed to initialize inference engine: {e}")
         # Continue anyway - health check will report unhealthy
@@ -74,6 +303,19 @@ app.add_middleware(
 )
 
 
+def update_gpu_metrics():
+    """Update Prometheus GPU metrics."""
+    if gpu_monitor and gpu_monitor.gpu_available:
+        stats = gpu_monitor.get_memory_stats()
+        gpu_memory_allocated.set(stats.get('allocated_gb', 0))
+        gpu_memory_free.set(stats.get('free_gb', 0))
+        gpu_memory_total.set(stats.get('total_gb', 0))
+        
+        utilization = gpu_monitor.get_utilization_percent()
+        if utilization is not None:
+            gpu_memory_utilization.set(utilization)
+
+
 # Middleware for request ID and logging
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
@@ -81,16 +323,73 @@ async def add_request_id(request: Request, call_next):
     request_id = str(uuid.uuid4())
     request.state.request_id = request_id
     
+    # Extract span context from headers and start span
+    span = None
+    trace_id = ""
+    if jaeger_tracer:
+        headers = dict(request.headers)
+        span_context = extract_span_context(jaeger_tracer, headers)
+        span = start_span(jaeger_tracer, f"{request.method} {request.url.path}", span_context)
+        
+        if span:
+            set_span_tag(span, "http.method", request.method)
+            set_span_tag(span, "http.url", str(request.url))
+            set_span_tag(span, "component", "glm-ocr-service")
+            set_span_tag(span, "request_id", request_id)
+            trace_id = get_trace_id(span)
+            request.state.span = span
+            request.state.trace_id = trace_id
+    
     start_time = time.time()
-    logger.info(f"Request started: {request.method} {request.url.path} [request_id={request_id}]")
+    
+    # Log request start with structured logging
+    log_record = logger.makeRecord(
+        logger.name, logging.INFO, "", 0,
+        f"Request started: {request.method} {request.url.path}",
+        (), None
+    )
+    log_record.request_id = request_id
+    log_record.context = {
+        "method": request.method,
+        "path": str(request.url.path),
+        "client_host": request.client.host if request.client else "unknown"
+    }
+    if trace_id:
+        log_record.context["trace_id"] = trace_id
+    logger.handle(log_record)
     
     response = await call_next(request)
     
     process_time = (time.time() - start_time) * 1000
-    logger.info(f"Request completed: {request.method} {request.url.path} [request_id={request_id}] [time={process_time:.2f}ms] [status={response.status_code}]")
+    
+    # Log request completion with structured logging
+    log_record = logger.makeRecord(
+        logger.name, logging.INFO, "", 0,
+        f"Request completed: {request.method} {request.url.path}",
+        (), None
+    )
+    log_record.request_id = request_id
+    log_record.context = {
+        "method": request.method,
+        "path": str(request.url.path),
+        "processing_time_ms": round(process_time, 2),
+        "status_code": response.status_code
+    }
+    if trace_id:
+        log_record.context["trace_id"] = trace_id
+    logger.handle(log_record)
+    
+    # Finish span
+    if span:
+        set_span_tag(span, "http.status_code", response.status_code)
+        if response.status_code >= 400:
+            set_span_tag(span, "error", True)
+        finish_span(span)
     
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Process-Time"] = f"{process_time:.2f}ms"
+    if trace_id:
+        response.headers["X-Trace-ID"] = trace_id
     
     return response
 
@@ -98,9 +397,20 @@ async def add_request_id(request: Request, call_next):
 # Exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Global exception handler."""
+    """Global exception handler with structured error logging."""
     request_id = getattr(request.state, "request_id", "unknown")
-    logger.error(f"Unhandled exception: {exc} [request_id={request_id}]", exc_info=True)
+    
+    # Use structured error logging
+    log_structured_error(
+        error=exc,
+        error_type="UNHANDLED_EXCEPTION",
+        request_id=request_id,
+        context={
+            "method": request.method,
+            "url": str(request.url),
+            "client_host": request.client.host if request.client else "unknown"
+        }
+    )
     
     return JSONResponse(
         status_code=500,
@@ -124,12 +434,50 @@ async def health_check():
     model_loaded = inference_engine is not None and inference_engine.is_ready()
     gpu_available = False
     device = "cpu"
+    gpu_memory_stats = None
     
     if inference_engine:
         device = inference_engine.device
         gpu_available = device == "cuda"
     
+    if gpu_monitor and gpu_available:
+        gpu_memory_stats = gpu_monitor.get_memory_stats()
+        # Update Prometheus metrics
+        update_gpu_metrics()
+        
+        # Log health check with GPU memory usage and timestamp
+        log_record = logger.makeRecord(
+            logger.name, logging.INFO, "", 0,
+            "Triton stub process health check",
+            (), None
+        )
+        log_record.context = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "model_loaded": model_loaded,
+            "gpu_memory_allocated_gb": gpu_memory_stats.get('allocated_gb', 0),
+            "gpu_memory_free_gb": gpu_memory_stats.get('free_gb', 0),
+            "gpu_memory_total_gb": gpu_memory_stats.get('total_gb', 0),
+            "gpu_memory_utilization_percent": gpu_monitor.get_utilization_percent(),
+            "uptime_seconds": uptime,
+            "health_status": "healthy" if model_loaded else "unhealthy"
+        }
+        logger.handle(log_record)
+    
     status = "healthy" if model_loaded else "unhealthy"
+    
+    # If model is not loaded, log as potential stub crash
+    if not model_loaded:
+        log_record = logger.makeRecord(
+            logger.name, logging.ERROR, "", 0,
+            "Health check failed: model not loaded or unavailable. This may indicate a Triton stub process crash or restart.",
+            (), None
+        )
+        log_record.context = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "uptime_seconds": uptime,
+            "health_status": "unhealthy"
+        }
+        logger.handle(log_record)
     
     return HealthResponse(
         status=status,
@@ -138,8 +486,56 @@ async def health_check():
         uptime_seconds=uptime,
         model_loaded=model_loaded,
         gpu_available=gpu_available,
-        device=device
+        device=device,
+        gpu_memory_stats=gpu_memory_stats
     )
+
+
+@app.get("/metrics")
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+    
+    Returns metrics in Prometheus format.
+    """
+    # Update GPU metrics before returning
+    update_gpu_metrics()
+    
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/cache/stats")
+async def cache_stats():
+    """
+    Get preprocessing cache statistics.
+    
+    Returns cache performance metrics.
+    """
+    if preprocessing_cache:
+        stats = preprocessing_cache.get_stats()
+        return JSONResponse(content=stats)
+    else:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Preprocessing cache not initialized"}
+        )
+
+
+@app.get("/performance/stats")
+async def performance_stats():
+    """
+    Get performance monitoring statistics.
+    
+    Returns processing time metrics and slow operation statistics.
+    """
+    if performance_monitor:
+        stats = performance_monitor.get_stats()
+        return JSONResponse(content=stats)
+    else:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Performance monitor not initialized"}
+        )
 
 
 @app.post("/extract-region", response_model=RegionExtractionResponse)
@@ -154,12 +550,57 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
         Extracted content with confidence and timing information
     """
     request_id = getattr(req.state, "request_id", "unknown")
+    trace_id = getattr(req.state, "trace_id", "")
+    
+    # Log extraction request start
+    log_extraction_request(
+        request_id=request_id,
+        status="started",
+        context={
+            "region_type": request.region_type,
+            "has_custom_prompt": bool(request.prompt)
+        },
+        trace_id=trace_id
+    )
     
     if not inference_engine or not inference_engine.is_ready():
+        # Log stub process failure with structured logging
+        gpu_stats = None
+        if gpu_monitor and gpu_monitor.gpu_available:
+            gpu_stats = gpu_monitor.get_memory_stats()
+        
+        uptime = int(time.time() - service_start_time)
+        
+        error = RuntimeError("Model not initialized or unavailable - possible Triton stub process crash")
+        log_model_unavailable_error(
+            error=error,
+            request_id=request_id,
+            gpu_stats=gpu_stats,
+            uptime_seconds=uptime
+        )
+        
         raise HTTPException(
             status_code=503,
-            detail="Model not initialized or unavailable"
+            detail="Service temporarily unavailable - model restart in progress",
+            headers={"Retry-After": "30"}
         )
+    
+    # Check GPU memory availability
+    if gpu_monitor and gpu_monitor.gpu_available:
+        if not gpu_monitor.has_sufficient_memory(required_gb=2.0):
+            stats = gpu_monitor.get_memory_stats()
+            logger.warning(
+                f"Insufficient GPU memory: {stats.get('free_gb', 0):.2f}GB available, "
+                f"2.0GB required [request_id={request_id}]"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f"Insufficient GPU memory. Available: {stats.get('free_gb', 0):.2f}GB, Required: 2.0GB",
+                headers={"Retry-After": "60"}
+            )
+        
+        # Log GPU memory before inference
+        gpu_monitor.log_memory_usage(f"before inference [request_id={request_id}]")
     
     start_time = time.time()
     
@@ -176,6 +617,14 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
         max_tokens = min(max_tokens, settings.max_tokens_limit)
         output_format = options.get("output_format", "text")
         
+        # Parse extraction options
+        extraction_opts = ExtractionOptions(
+            granularity=options.get("granularity", "block"),
+            output_format=output_format,
+            include_coordinates=options.get("include_coordinates", True),
+            include_confidence=options.get("include_confidence", True)
+        )
+        
         logger.info(f"Extracting region: type={request.region_type}, prompt={prompt[:50]}... [request_id={request_id}]")
         
         # Extract content
@@ -185,10 +634,169 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
             max_tokens=max_tokens,
             output_format=output_format
         )
+    
+    except Exception as e:
+        # Check if this is a CUDA out-of-memory error
+        import torch
+        if torch.cuda.is_available() and isinstance(e, (torch.cuda.OutOfMemoryError, RuntimeError)):
+            error_str = str(e).lower()
+            if "out of memory" in error_str or "cuda" in error_str:
+                # Log GPU memory stats with structured error logging
+                gpu_stats = None
+                if gpu_monitor and gpu_monitor.gpu_available:
+                    gpu_stats = gpu_monitor.get_memory_stats()
+                    # Clear GPU cache to free memory
+                    gpu_monitor.clear_cache()
+                
+                # Use structured error logging
+                log_gpu_memory_error(
+                    error=e,
+                    request_id=request_id,
+                    gpu_stats=gpu_stats,
+                    document_size_mb=None,  # Not available at this level
+                    batch_size=None,
+                    retry_attempt=None
+                )
+                
+                extraction_requests_total.labels(endpoint='extract_region', status='oom_error').inc()
+                
+                raise HTTPException(
+                    status_code=503,
+                    detail="Insufficient GPU memory to process request",
+                    headers={"Retry-After": "60"}
+                )
+        
+        # Re-raise other exceptions to be handled by existing error handlers
+        raise
+    
+    try:
         
         processing_time_ms = int((time.time() - start_time) * 1000)
         
+        # Get GPU memory usage after inference
+        gpu_memory_used = None
+        if gpu_monitor and gpu_monitor.gpu_available:
+            stats = gpu_monitor.get_memory_stats()
+            gpu_memory_used = stats.get("allocated_gb")
+            gpu_monitor.log_memory_usage(f"after inference [request_id={request_id}]")
+            # Update Prometheus metrics
+            update_gpu_metrics()
+        
+        # Process based on granularity and format
+        word_boxes = None
+        key_value_pairs = None
+        bounding_boxes = None
+        
+        # Assume page bbox for now (would come from actual OCR in production)
+        page_bbox = [0, 0, 1000, 1000]
+        
+        if extraction_opts.granularity == "word" and word_extractor:
+            words = word_extractor.extract_words(content, page_bbox, confidence)
+            words = word_extractor.handle_hyphenated_words(words)
+            words = word_extractor.sort_words_reading_order(words)
+            
+            if extraction_opts.include_coordinates:
+                word_boxes = [
+                    WordBoundingBox(
+                        word=w.word,
+                        bbox=w.bbox,
+                        confidence=w.confidence if extraction_opts.include_confidence else 1.0
+                    )
+                    for w in words
+                ]
+        
+        if extraction_opts.output_format == "key_value" and kv_extractor:
+            pairs = kv_extractor.extract_key_values(content, page_bbox)
+            pairs = kv_extractor.handle_multi_value_keys(pairs)
+            
+            if extraction_opts.include_coordinates:
+                key_value_pairs = [
+                    KeyValuePair(
+                        key=p.key,
+                        key_bbox=p.key_bbox,
+                        value=p.value,
+                        value_bbox=p.value_bbox,
+                        confidence=p.confidence if extraction_opts.include_confidence else 1.0
+                    )
+                    for p in pairs
+                ]
+        
+        # Record Prometheus metrics
+        extraction_requests_total.labels(endpoint='extract_region', status='success').inc()
+        extraction_duration_seconds.labels(endpoint='extract_region').observe(processing_time_ms / 1000.0)
+        extraction_tokens_total.labels(type='prompt').inc(prompt_tokens)
+        extraction_tokens_total.labels(type='completion').inc(completion_tokens)
+        
+        # Validate extraction results
+        validation_warnings = None
+        if validator:
+            # Prepare result dict for validation
+            result_dict = {
+                'word_boxes': word_boxes,
+                'key_value_pairs': key_value_pairs,
+                'bounding_boxes': bounding_boxes
+            }
+            
+            validation_summary = validator.validate_extraction_result(result_dict, page_bbox)
+            
+            # Include warnings in response if any
+            if validation_summary['warnings']:
+                validation_warnings = validation_summary['warnings']
+                
+                # Log validation warnings
+                logger.warning(
+                    f"Validation warnings: {len(validation_warnings)} issues found "
+                    f"[request_id={request_id}]"
+                )
+                
+                # Log if low confidence ratio is high
+                low_conf_count = validation_summary['stats'].get('low_confidence_count', 0)
+                total_elements = validation_summary['stats'].get('total_elements', 0)
+                if total_elements > 0 and low_conf_count / total_elements > 0.2:
+                    logger.warning(
+                        f"High low-confidence ratio: {low_conf_count}/{total_elements} "
+                        f"({low_conf_count/total_elements:.1%}) [request_id={request_id}]"
+                    )
+        
         logger.info(f"Region extraction completed: confidence={confidence:.2f}, time={processing_time_ms}ms [request_id={request_id}]")
+        
+        # Record performance metrics
+        if performance_monitor:
+            # Estimate page size (approximate from base64 image size)
+            import sys
+            page_size_bytes = sys.getsizeof(request.image)
+            
+            # Estimate complexity
+            complexity_score = performance_monitor.estimate_complexity(
+                page_size_bytes=page_size_bytes,
+                text_length=len(content) if content else 0,
+                has_tables=extraction_opts.output_format == "table",
+                has_images=False  # Not available at this level
+            )
+            
+            performance_monitor.record_operation(
+                processing_time_ms=processing_time_ms,
+                page_size_bytes=page_size_bytes,
+                complexity_score=complexity_score,
+                request_id=request_id
+            )
+        
+        # Log extraction request completion
+        log_extraction_request(
+            request_id=request_id,
+            status="completed",
+            processing_time_ms=processing_time_ms,
+            context={
+                "confidence": confidence,
+                "region_type": request.region_type,
+                "output_format": extraction_opts.output_format,
+                "granularity": extraction_opts.granularity,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "gpu_memory_used_gb": gpu_memory_used
+            },
+            trace_id=trace_id
+        )
         
         return RegionExtractionResponse(
             content=content,
@@ -197,13 +805,46 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
             tokens_used=TokenUsage(
                 prompt=prompt_tokens,
                 completion=completion_tokens
-            )
+            ),
+            gpu_memory_used_gb=gpu_memory_used,
+            word_boxes=word_boxes,
+            key_value_pairs=key_value_pairs,
+            bounding_boxes=bounding_boxes,
+            validation_warnings=validation_warnings
         )
         
     except ValueError as e:
+        extraction_requests_total.labels(endpoint='extract_region', status='error').inc()
+        
+        # Log extraction request failure
+        log_extraction_request(
+            request_id=request_id,
+            status="failed",
+            processing_time_ms=int((time.time() - start_time) * 1000),
+            context={
+                "error_type": "VALIDATION_ERROR",
+                "error_message": str(e)
+            },
+            trace_id=trace_id
+        )
+        
         logger.error(f"Validation error: {e} [request_id={request_id}]")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        extraction_requests_total.labels(endpoint='extract_region', status='error').inc()
+        
+        # Log extraction request failure
+        log_extraction_request(
+            request_id=request_id,
+            status="failed",
+            processing_time_ms=int((time.time() - start_time) * 1000),
+            context={
+                "error_type": "EXTRACTION_ERROR",
+                "error_message": str(e)
+            },
+            trace_id=trace_id
+        )
+        
         logger.error(f"Extraction failed: {e} [request_id={request_id}]", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
@@ -220,12 +861,57 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
         Results for each region with total timing information
     """
     request_id = getattr(req.state, "request_id", "unknown")
+    trace_id = getattr(req.state, "trace_id", "")
+    
+    # Log batch extraction request start
+    log_extraction_request(
+        request_id=request_id,
+        status="started",
+        context={
+            "batch_size": len(request.regions),
+            "endpoint": "batch"
+        },
+        trace_id=trace_id
+    )
     
     if not inference_engine or not inference_engine.is_ready():
+        # Log stub process failure with structured logging
+        gpu_stats = None
+        if gpu_monitor and gpu_monitor.gpu_available:
+            gpu_stats = gpu_monitor.get_memory_stats()
+        
+        uptime = int(time.time() - service_start_time)
+        
+        error = RuntimeError("Model not initialized or unavailable for batch - possible Triton stub process crash")
+        log_model_unavailable_error(
+            error=error,
+            request_id=request_id,
+            gpu_stats=gpu_stats,
+            uptime_seconds=uptime
+        )
+        
         raise HTTPException(
             status_code=503,
-            detail="Model not initialized or unavailable"
+            detail="Service temporarily unavailable - model restart in progress",
+            headers={"Retry-After": "30"}
         )
+    
+    # Check GPU memory availability
+    if gpu_monitor and gpu_monitor.gpu_available:
+        if not gpu_monitor.has_sufficient_memory(required_gb=2.0):
+            stats = gpu_monitor.get_memory_stats()
+            logger.warning(
+                f"Insufficient GPU memory for batch: {stats.get('free_gb', 0):.2f}GB available, "
+                f"2.0GB required [request_id={request_id}]"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f"Insufficient GPU memory. Available: {stats.get('free_gb', 0):.2f}GB, Required: 2.0GB",
+                headers={"Retry-After": "60"}
+            )
+        
+        # Log GPU memory before batch processing
+        gpu_monitor.log_memory_usage(f"before batch [request_id={request_id}]")
     
     start_time = time.time()
     
@@ -278,6 +964,37 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
             logger.info(f"Region {region.region_id} processed successfully [request_id={request_id}]")
             
         except Exception as e:
+            # Check if this is a CUDA out-of-memory error
+            import torch
+            if torch.cuda.is_available() and isinstance(e, (torch.cuda.OutOfMemoryError, RuntimeError)):
+                error_str = str(e).lower()
+                if "out of memory" in error_str or "cuda" in error_str:
+                    # Log GPU memory stats with structured error logging
+                    gpu_stats = None
+                    if gpu_monitor and gpu_monitor.gpu_available:
+                        gpu_stats = gpu_monitor.get_memory_stats()
+                        # Clear GPU cache to free memory
+                        gpu_monitor.clear_cache()
+                    
+                    # Use structured error logging
+                    log_gpu_memory_error(
+                        error=e,
+                        request_id=request_id,
+                        gpu_stats=gpu_stats,
+                        document_size_mb=None,
+                        batch_size=len(request.regions),
+                        retry_attempt=None
+                    )
+                    
+                    # For batch processing, we fail the entire batch on OOM
+                    extraction_requests_total.labels(endpoint='extract_regions_batch', status='oom_error').inc()
+                    
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Insufficient GPU memory to process batch request",
+                        headers={"Retry-After": "60"}
+                    )
+            
             logger.error(f"Failed to process region {region.region_id}: {e} [request_id={request_id}]")
             results.append(BatchRegionResult(
                 region_id=region.region_id,
@@ -288,7 +1005,55 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
     
     total_processing_time_ms = int((time.time() - start_time) * 1000)
     
+    # Get GPU memory usage after batch processing
+    gpu_memory_used = None
+    if gpu_monitor and gpu_monitor.gpu_available:
+        stats = gpu_monitor.get_memory_stats()
+        gpu_memory_used = stats.get("allocated_gb")
+        gpu_monitor.log_memory_usage(f"after batch [request_id={request_id}]")
+        # Update Prometheus metrics
+        update_gpu_metrics()
+    
+    # Record Prometheus metrics
+    extraction_requests_total.labels(endpoint='extract_regions_batch', status='success').inc()
+    extraction_duration_seconds.labels(endpoint='extract_regions_batch').observe(total_processing_time_ms / 1000.0)
+    extraction_tokens_total.labels(type='prompt').inc(total_prompt_tokens)
+    extraction_tokens_total.labels(type='completion').inc(total_completion_tokens)
+    
     logger.info(f"Batch processing completed: {len(results)} regions, time={total_processing_time_ms}ms [request_id={request_id}]")
+    
+    # Record performance metrics for batch
+    if performance_monitor:
+        # Calculate average per-region processing time
+        avg_time_per_region = total_processing_time_ms / len(results) if results else 0
+        
+        # Estimate batch size
+        import sys
+        batch_size_bytes = sum(sys.getsizeof(r.image) for r in request.regions)
+        
+        performance_monitor.record_operation(
+            processing_time_ms=total_processing_time_ms,
+            page_size_bytes=batch_size_bytes,
+            complexity_score=None,  # Not calculated for batch
+            request_id=request_id
+        )
+    
+    # Log batch extraction request completion
+    log_extraction_request(
+        request_id=request_id,
+        status="completed",
+        processing_time_ms=total_processing_time_ms,
+        context={
+            "batch_size": len(results),
+            "endpoint": "batch",
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
+            "gpu_memory_used_gb": gpu_memory_used,
+            "successful_regions": sum(1 for r in results if not r.error),
+            "failed_regions": sum(1 for r in results if r.error)
+        },
+        trace_id=trace_id
+    )
     
     return BatchRegionExtractionResponse(
         results=results,
@@ -296,7 +1061,8 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
         tokens_used=TokenUsage(
             prompt=total_prompt_tokens,
             completion=total_completion_tokens
-        )
+        ),
+        gpu_memory_used_gb=gpu_memory_used
     )
 
 

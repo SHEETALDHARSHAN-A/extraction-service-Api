@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/user/idep/api-gateway/cache"
 	"github.com/user/idep/api-gateway/clients"
 	"github.com/user/idep/api-gateway/config"
@@ -20,7 +21,9 @@ import (
 	"github.com/user/idep/api-gateway/middleware"
 	"github.com/user/idep/api-gateway/models"
 	"github.com/user/idep/api-gateway/orchestrator"
+	"github.com/user/idep/api-gateway/queue"
 	"github.com/user/idep/api-gateway/storage"
+	"github.com/user/idep/api-gateway/tracing"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"gorm.io/driver/postgres"
@@ -32,6 +35,7 @@ var (
 	minioStore        *storage.MinioClient
 	temporalClient    client.Client
 	redisCache        *cache.RedisCache
+	requestQueue      queue.RequestQueue
 	cfg               *config.Config
 	paddleOCRClient   *clients.PaddleOCRClient
 	glmOCRClient      *clients.GLMOCRClient
@@ -41,8 +45,22 @@ var (
 func main() {
 	cfg = config.Load()
 
+	// --- Initialize Jaeger Tracer ---
+	jaegerEndpoint := "localhost:6831" // Default Jaeger agent endpoint
+	if endpoint := cfg.JaegerEndpoint; endpoint != "" {
+		jaegerEndpoint = endpoint
+	}
+	
+	tracer, closer, err := tracing.InitJaeger("idep-api-gateway", jaegerEndpoint)
+	if err != nil {
+		log.Printf("⚠️ Failed to initialize Jaeger tracer (non-fatal): %v", err)
+	} else {
+		defer closer.Close()
+		log.Println("✅ Jaeger tracer initialized")
+	}
+	_ = tracer // Tracer is set globally
+
 	// --- Initialize PostgreSQL ---
-	var err error
 	db, err = gorm.Open(postgres.Open(cfg.DatabaseURL), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -78,6 +96,37 @@ func main() {
 	if err != nil {
 		log.Printf("⚠️ Redis cache unavailable (non-fatal): %v", err)
 	}
+
+	// --- Initialize Redis Request Queue ---
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: cfg.RedisURL,
+	})
+	requestQueue = queue.NewRedisQueue(redisClient)
+	log.Println("✅ Redis request queue initialized")
+
+	// Start queue metrics emission goroutine
+	go func() {
+		ticker := time.NewTicker(30 * time.Second) // Emit metrics every 30 seconds
+		defer ticker.Stop()
+
+		for range ticker.C {
+			metrics, err := requestQueue.UpdateQueueMetrics(context.Background())
+			if err != nil {
+				log.Printf("⚠️ Failed to update queue metrics: %v", err)
+				continue
+			}
+
+			// Log queue metrics with structured logging
+			log.Printf(`{"timestamp":"%s","level":"INFO","service":"idep-api-gateway","message":"Queue metrics","context":{"queue_length":%d,"processing_count":%d,"avg_wait_time_seconds":%.2f,"avg_processing_time_seconds":%.2f,"throughput_per_hour":%.2f}}`,
+				metrics.Timestamp,
+				metrics.QueueLength,
+				metrics.ProcessingCount,
+				metrics.AvgWaitTimeSeconds,
+				metrics.AvgProcessingTime,
+				metrics.ThroughputPerHour,
+			)
+		}
+	}()
 
 	// --- Initialize Service Clients ---
 	paddleOCRClient = clients.NewPaddleOCRClient(
@@ -116,6 +165,7 @@ func main() {
 	r := gin.Default()
 
 	// Global middleware
+	r.Use(middleware.TracingMiddleware())
 	r.Use(middleware.PrometheusMiddleware())
 	r.Use(middleware.RateLimit())
 
@@ -134,6 +184,9 @@ func main() {
 		api.GET("/jobs/:id", getJobStatus)
 		api.GET("/jobs/:id/result", getJobResult)
 		api.GET("/jobs/batch/:batch_id", getBatchStatus)
+
+		// Queue management
+		api.GET("/queue/status", getQueueStatus)
 
 		// Platform
 		api.GET("/admin/stats", getSystemStats)
@@ -156,11 +209,129 @@ func batchHandler() *handlers.BatchUploadHandler {
 // --- Handlers ---
 
 func healthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "healthy",
-		"service": "idep-api-gateway",
-		"time":    time.Now().Format(time.RFC3339),
+	ctx := c.Request.Context()
+	components := make(map[string]interface{})
+	overallStatus := "healthy"
+
+	// Check Triton (via GLM-OCR service health endpoint)
+	tritonStatus := checkServiceHealth(cfg.GLMOCRServiceURL + "/health")
+	components["triton"] = tritonStatus
+	if status, ok := tritonStatus["status"].(string); !ok || status != "healthy" {
+		overallStatus = "degraded"
+	}
+
+	// Check GLM-OCR service
+	glmOCRStatus := checkServiceHealth(cfg.GLMOCRServiceURL + "/health")
+	components["glm_ocr_service"] = glmOCRStatus
+	if status, ok := glmOCRStatus["status"].(string); !ok || status != "healthy" {
+		overallStatus = "degraded"
+	}
+
+	// Check Redis queue
+	if requestQueue != nil {
+		queueLength, err := requestQueue.GetQueueLength(ctx)
+		estimatedWait, _ := requestQueue.GetEstimatedWaitTime(ctx)
+		
+		queueStatus := gin.H{
+			"status": "healthy",
+		}
+		
+		if err != nil {
+			queueStatus["status"] = "unhealthy"
+			queueStatus["error"] = err.Error()
+			overallStatus = "degraded"
+		} else {
+			queueStatus["queue_length"] = queueLength
+			queueStatus["estimated_wait_time_seconds"] = int(estimatedWait.Seconds())
+		}
+		
+		components["request_queue"] = queueStatus
+	} else {
+		components["request_queue"] = gin.H{
+			"status": "unavailable",
+		}
+		overallStatus = "degraded"
+	}
+
+	// Check database
+	sqlDB, err := db.DB()
+	dbStatus := gin.H{
+		"status": "healthy",
+	}
+	if err != nil || sqlDB.Ping() != nil {
+		dbStatus["status"] = "unhealthy"
+		if err != nil {
+			dbStatus["error"] = err.Error()
+		}
+		overallStatus = "unhealthy"
+	} else {
+		stats := sqlDB.Stats()
+		dbStatus["connection_pool_available"] = stats.MaxOpenConnections - stats.InUse
+	}
+	components["database"] = dbStatus
+
+	// Check Redis cache
+	if redisCache != nil {
+		redisStatus := gin.H{
+			"status": "healthy",
+		}
+		// Try a simple ping
+		stats := redisCache.GetCacheStats(ctx)
+		if stats == nil {
+			redisStatus["status"] = "unhealthy"
+			overallStatus = "degraded"
+		}
+		components["redis"] = redisStatus
+	} else {
+		components["redis"] = gin.H{
+			"status": "unavailable",
+		}
+	}
+
+	statusCode := http.StatusOK
+	if overallStatus == "unhealthy" {
+		statusCode = http.StatusServiceUnavailable
+	} else if overallStatus == "degraded" {
+		statusCode = http.StatusOK // Still return 200 for degraded
+	}
+
+	c.JSON(statusCode, gin.H{
+		"status":     overallStatus,
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"service":    "idep-api-gateway",
+		"components": components,
 	})
+}
+
+// checkServiceHealth performs a simple HTTP GET to a service health endpoint
+func checkServiceHealth(url string) gin.H {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+	
+	resp, err := client.Get(url)
+	if err != nil {
+		return gin.H{
+			"status":           "unhealthy",
+			"error":            err.Error(),
+			"last_health_check": time.Now().Format(time.RFC3339),
+		}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return gin.H{
+			"status":           "unhealthy",
+			"response_code":    resp.StatusCode,
+			"last_health_check": time.Now().Format(time.RFC3339),
+		}
+	}
+
+	return gin.H{
+		"status":            "healthy",
+		"response_time_ms":  0, // Could measure this if needed
+		"last_health_check": time.Now().Format(time.RFC3339),
+	}
 }
 
 func uploadDocument(c *gin.Context) {
@@ -170,6 +341,24 @@ func uploadDocument(c *gin.Context) {
 		return
 	}
 	defer file.Close()
+
+	// Document size validation - max 10MB
+	const maxDocumentSize = 10 * 1024 * 1024 // 10MB in bytes
+	if header.Size > maxDocumentSize {
+		maxSizeMB := float64(maxDocumentSize) / (1024 * 1024)
+		providedSizeMB := float64(header.Size) / (1024 * 1024)
+		
+		log.Printf("❌ Document too large: %s (%.2fMB) exceeds maximum of %.2fMB",
+			header.Filename, providedSizeMB, maxSizeMB)
+		
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"error":            "Document too large",
+			"max_size_mb":      maxSizeMB,
+			"provided_size_mb": providedSizeMB,
+			"message":          fmt.Sprintf("Document size (%.2fMB) exceeds maximum allowed size of %.2fMB", providedSizeMB, maxSizeMB),
+		})
+		return
+	}
 
 	// --- Cache Dedup: Hash content to detect duplicates ---
 	var buf bytes.Buffer
@@ -294,6 +483,63 @@ func uploadDocument(c *gin.Context) {
 	}
 	middleware.RecordJobCreated()
 
+	// --- Enqueue job to Redis queue ---
+	queuedJob := &queue.QueuedJob{
+		JobID:        jobID,
+		Priority:     0, // Default priority (normal)
+		EnqueuedAt:   time.Now(),
+		DocumentSize: header.Size,
+		Options: map[string]interface{}{
+			"prompt":                     customPrompt,
+			"include_coordinates":        includeCoordinates,
+			"include_word_confidence":    includeWordConfidence,
+			"include_line_confidence":    includeLineConfidence,
+			"include_page_layout":        includePageLayout,
+			"language":                   language,
+			"granularity":                granularity,
+			"redact_pii":                 redactPII,
+			"enhance":                    enhance,
+			"deskew":                     deskew,
+			"max_pages":                  maxPages,
+			"temperature":                temperature,
+			"max_tokens":                 maxTokens,
+			"precision_mode":             precisionMode,
+			"extract_fields":             extractFields,
+			"enable_layout_detection":    enableLayoutDetection,
+			"parallel_region_processing": parallelRegionProcessing,
+			"layout_detection_options": map[string]interface{}{
+				"min_confidence":       minConfidence,
+				"detect_tables":        detectTables,
+				"detect_formulas":      detectFormulas,
+				"max_parallel_regions": maxParallelRegions,
+				"cache_layout_results": cacheLayoutResults,
+			},
+		},
+	}
+
+	if err := requestQueue.Enqueue(c.Request.Context(), queuedJob); err != nil {
+		// Queue is full - return HTTP 429 with retry-after header
+		estimatedWait, _ := requestQueue.GetEstimatedWaitTime(c.Request.Context())
+		retryAfterSeconds := int(estimatedWait.Seconds())
+		if retryAfterSeconds < 60 {
+			retryAfterSeconds = 60 // Minimum 1 minute retry
+		}
+
+		c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSeconds))
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error":                      "Queue is full, please retry later",
+			"retry_after_seconds":        retryAfterSeconds,
+			"estimated_wait_time_seconds": int(estimatedWait.Seconds()),
+		})
+		
+		// Clean up the job record since we couldn't enqueue
+		db.Delete(&job)
+		return
+	}
+
+	queueLength, _ := requestQueue.GetQueueLength(c.Request.Context())
+	estimatedWait, _ := requestQueue.GetEstimatedWaitTime(c.Request.Context())
+
 	workflowOptions := client.StartWorkflowOptions{
 		ID:        fmt.Sprintf("doc-processing-%s", jobID),
 		TaskQueue: cfg.TemporalTaskQueue,
@@ -352,11 +598,13 @@ func uploadDocument(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusAccepted, gin.H{
-		"job_id":         jobID,
-		"filename":       header.Filename,
-		"status":         "PROCESSING",
-		"workflow_id":    we.GetID(),
-		"output_formats": outputFormats,
+		"job_id":                      jobID,
+		"filename":                    header.Filename,
+		"status":                      "QUEUED",
+		"workflow_id":                 we.GetID(),
+		"output_formats":              outputFormats,
+		"queue_position":              queueLength,
+		"estimated_wait_time_seconds": int(estimatedWait.Seconds()),
 		"options": gin.H{
 			"prompt":                     customPrompt,
 			"include_coordinates":        includeCoordinates,
@@ -630,5 +878,36 @@ func getCacheStats(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "connected",
 		"stats":  stats,
+	})
+}
+
+func getQueueStatus(c *gin.Context) {
+	if requestQueue == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Queue service unavailable",
+		})
+		return
+	}
+
+	queueLength, err := requestQueue.GetQueueLength(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to get queue length",
+		})
+		return
+	}
+
+	estimatedWait, err := requestQueue.GetEstimatedWaitTime(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to get estimated wait time",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"queue_length":                queueLength,
+		"estimated_wait_time_seconds": int(estimatedWait.Seconds()),
+		"timestamp":                   time.Now().Format(time.RFC3339),
 	})
 }

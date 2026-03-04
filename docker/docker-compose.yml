@@ -198,6 +198,8 @@ services:
       - IDEP_STRICT_REAL=true
       - GLM_MODEL_PATH=zai-org/GLM-OCR
       - HF_HOME=/opt/hf-cache
+      - CUDA_LAUNCH_BLOCKING=1
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
     volumes:
       - ../services/triton-models:/models
       - hf_cache:/opt/hf-cache
@@ -209,9 +211,10 @@ services:
         export LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/nvidia/cuda_runtime/lib:$$LD_LIBRARY_PATH
         pip install --no-deps --force-reinstall safetensors==0.4.5 numpy==1.26.4 2>/dev/null
         exec tritonserver --model-repository=/models --allow-gpu-metrics=true --log-verbose=1 \
-          --backend-config=python,shm-default-byte-size=4194304 \
-          --backend-config=python,shm-growth-byte-size=4194304 \
-          --backend-config=python,stub-timeout-seconds=600
+          --backend-config=python,shm-default-byte-size=8388608 \
+          --backend-config=python,shm-growth-byte-size=8388608 \
+          --backend-config=python,stub-timeout-seconds=600 \
+          --backend-config=python,stub-health-check-interval-seconds=30
     healthcheck:
       test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v2/health/ready', timeout=3)" ]
       interval: 10s
@@ -345,6 +348,7 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus-alerts.yml:/etc/prometheus/prometheus-alerts.yml
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -360,6 +364,9 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
     depends_on:
       - prometheus
 

@@ -266,6 +266,50 @@ func (a *Activities) downloadSourceFromMinIO(ctx context.Context, storagePath, j
 
 // ─── Activity 2: CallTriton ───
 
+// PageProcessingInput contains input for processing a single page
+type PageProcessingInput struct {
+	JobID         string            `json:"job_id"`
+	PageNumber    int               `json:"page_number"`
+	ImagePath     string            `json:"image_path"`
+	Prompt        string            `json:"prompt"`
+	OptionsJSON   string            `json:"options_json"`
+	PrecisionMode string            `json:"precision_mode"`
+}
+
+// PageProcessingOutput contains the result of processing a single page
+type PageProcessingOutput struct {
+	PageNumber int     `json:"page_number"`
+	Content    string  `json:"content"`
+	Confidence float64 `json:"confidence"`
+	Error      string  `json:"error,omitempty"`
+}
+
+// ProcessSinglePage processes a single page through Triton
+func (a *Activities) ProcessSinglePage(ctx context.Context, input *PageProcessingInput) (*PageProcessingOutput, error) {
+	log.Printf("🧠 [ProcessSinglePage] job=%s page=%d", input.JobID, input.PageNumber)
+
+	imgPath := input.ImagePath
+	if !filepath.IsAbs(imgPath) {
+		imgPath = filepath.Join("/tmp/idep", imgPath)
+	}
+
+	pageJSON, pageConf, err := a.callTritonHTTP(ctx, imgPath, input.Prompt, input.OptionsJSON, input.PrecisionMode)
+	if err != nil {
+		return &PageProcessingOutput{
+			PageNumber: input.PageNumber,
+			Error:      err.Error(),
+		}, fmt.Errorf("triton inference failed for page %d: %w", input.PageNumber, err)
+	}
+
+	log.Printf("✅ [ProcessSinglePage] job=%s page=%d confidence=%.2f", input.JobID, input.PageNumber, pageConf)
+
+	return &PageProcessingOutput{
+		PageNumber: input.PageNumber,
+		Content:    pageJSON,
+		Confidence: pageConf,
+	}, nil
+}
+
 // buildPrompt returns the official GLM-OCR task prompt for the requested output format.
 // Reference: https://github.com/zai-org/GLM-OCR — prompts are fixed task prefixes, not
 // free-form instructions. The model's output structure is controlled via the options JSON.
