@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/user/idep/services/api-gateway/queue"
+	"github.com/user/idep/api-gateway/queue"
 )
 
 // QueueActivities holds queue-related activities
@@ -33,6 +33,19 @@ func (qa *QueueActivities) CheckQueueStatus(ctx context.Context, jobID string) (
 
 	log.Printf("✅ [CheckQueueStatus] Job %s status: %s", jobID, job.Status)
 	return string(job.Status), nil
+}
+
+// MarkJobProcessing transitions a queued job to PROCESSING.
+func (qa *QueueActivities) MarkJobProcessing(ctx context.Context, jobID string) error {
+	log.Printf("🔄 [MarkJobProcessing] Marking job %s as PROCESSING", jobID)
+
+	err := qa.Queue.UpdateStatus(ctx, jobID, queue.StatusProcessing)
+	if err != nil {
+		return fmt.Errorf("failed to mark job as processing: %w", err)
+	}
+
+	log.Printf("✅ [MarkJobProcessing] Job %s marked as PROCESSING", jobID)
+	return nil
 }
 
 // AcquireGPULock attempts to acquire exclusive GPU access for a job
@@ -141,4 +154,3 @@ func (qa *QueueActivities) StorePartialResults(ctx context.Context, jobID string
 		jobID, pagesCompleted, totalPages)
 	return nil
 }
-

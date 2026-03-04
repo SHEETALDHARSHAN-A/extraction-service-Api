@@ -30,37 +30,30 @@ func DocumentProcessingWorkflow(ctx workflow.Context, input map[string]interface
 	var partialPageResults []*PageProcessingOutput
 	var preprocessOutput PreprocessOutput
 
-	// Queue polling: Wait for job to be dequeued and status to become PROCESSING
-	logger.Info("⏳ Waiting for job to be dequeued from queue", "job_id", jobID)
+	// Mark queue status as PROCESSING at workflow start.
+	// NOTE: There is no standalone queue consumer currently calling Dequeue(),
+	// so waiting for PROCESSING can block forever while status remains QUEUED.
+	logger.Info("🔄 Marking queued job as PROCESSING", "job_id", jobID)
 	queueCheckOpts := workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    time.Second,
-			BackoffCoefficient: 1.0,
-			MaximumInterval:    time.Second,
-			MaximumAttempts:    0, // Unlimited retries for queue polling
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    5 * time.Second,
+			MaximumAttempts:    5,
 		},
 	}
 
 	var queueActivities *QueueActivities
 	queueCheckCtx := workflow.WithActivityOptions(ctx, queueCheckOpts)
 
-	// Poll queue status until job is PROCESSING
-	err := workflow.Await(ctx, func() bool {
-		var status string
-		err := workflow.ExecuteActivity(queueCheckCtx, queueActivities.CheckQueueStatus, jobID).Get(ctx, &status)
-		if err != nil {
-			logger.Warn("Failed to check queue status, will retry", "error", err)
-			return false
-		}
-		return status == "PROCESSING"
-	})
+	err := workflow.ExecuteActivity(queueCheckCtx, queueActivities.MarkJobProcessing, jobID).Get(ctx, nil)
 	if err != nil {
-		logger.Error("❌ Queue polling failed", "error", err)
+		logger.Error("❌ Failed to mark queue status as PROCESSING", "error", err)
 		return nil, err
 	}
 
-	logger.Info("✅ Job dequeued and ready for processing", "job_id", jobID)
+	logger.Info("✅ Job ready for processing", "job_id", jobID)
 
 	// Acquire GPU lock before processing
 	logger.Info("🔒 Acquiring GPU lock", "job_id", jobID)
@@ -134,9 +127,9 @@ func DocumentProcessingWorkflow(ctx workflow.Context, input map[string]interface
 		StartToCloseTimeout: 30 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    time.Second,
-			BackoffCoefficient: 2.0,           // Exponential backoff: 1s, 2s, 4s, ...
-			MaximumInterval:    time.Minute,   // Cap at 1 minute
-			MaximumAttempts:    3,             // Limit to 3 attempts as per requirements
+			BackoffCoefficient: 2.0,         // Exponential backoff: 1s, 2s, 4s, ...
+			MaximumInterval:    time.Minute, // Cap at 1 minute
+			MaximumAttempts:    3,           // Limit to 3 attempts as per requirements
 			// Note: Temporal automatically adds jitter (±10%) to prevent thundering herd
 		},
 	}
@@ -165,7 +158,7 @@ func DocumentProcessingWorkflow(ctx workflow.Context, input map[string]interface
 
 	// Step 2: GLM-OCR Extraction via Triton with parallel page processing
 	logger.Info("🧠 Step 2: AI Extraction (parallel)", "formats", preprocessOutput.Options.OutputFormats, "pages", preprocessOutput.PageCount)
-	
+
 	// Build prompt and options for Triton
 	prompt := buildPromptForWorkflow(preprocessOutput.Options)
 	optionsJSON := buildOptionsJSONForWorkflow(preprocessOutput.Options)
@@ -174,11 +167,11 @@ func DocumentProcessingWorkflow(ctx workflow.Context, input map[string]interface
 	pageResults, err := processPagesConcurrently(ctx, extractionOpts, &preprocessOutput, prompt, optionsJSON, activities)
 	if err != nil {
 		logger.Error("❌ Parallel extraction failed", "error", err)
-		
+
 		// Check if this is a timeout error
 		if workflow.IsTimeoutError(err) {
 			logger.Error("⏱️ Workflow timeout occurred", "error", err)
-			
+
 			// Store partial results
 			processingTime := workflow.Now(ctx).Sub(workflowStartTime)
 			partialResults := map[string]interface{}{
@@ -186,12 +179,12 @@ func DocumentProcessingWorkflow(ctx workflow.Context, input map[string]interface
 				"total_pages":     preprocessOutput.PageCount,
 			}
 			processingMetadata := map[string]interface{}{
-				"pages_completed":        len(partialPageResults),
-				"total_pages":            preprocessOutput.PageCount,
+				"pages_completed":         len(partialPageResults),
+				"total_pages":             preprocessOutput.PageCount,
 				"processing_time_seconds": int(processingTime.Seconds()),
-				"timeout_type":           "workflow_timeout",
+				"timeout_type":            "workflow_timeout",
 			}
-			
+
 			// Store partial results using activity
 			storeOpts := workflow.ActivityOptions{
 				StartToCloseTimeout: 30 * time.Second,
@@ -203,18 +196,18 @@ func DocumentProcessingWorkflow(ctx workflow.Context, input map[string]interface
 				},
 			}
 			storeCtx := workflow.WithActivityOptions(ctx, storeOpts)
-			
+
 			storeErr := workflow.ExecuteActivity(storeCtx, queueActivities.StorePartialResults, jobID, partialResults, processingMetadata).Get(ctx, nil)
 			if storeErr != nil {
 				logger.Error("⚠️ Failed to store partial results", "error", storeErr)
 			} else {
 				logger.Info("✅ Partial results stored", "pages_completed", len(partialPageResults), "total_pages", preprocessOutput.PageCount)
 			}
-			
-			return nil, fmt.Errorf("workflow timeout after %d seconds: completed %d of %d pages", 
+
+			return nil, fmt.Errorf("workflow timeout after %d seconds: completed %d of %d pages",
 				int(processingTime.Seconds()), len(partialPageResults), preprocessOutput.PageCount)
 		}
-		
+
 		// Store failure details for non-timeout errors
 		failureOpts := workflow.ActivityOptions{
 			StartToCloseTimeout: 30 * time.Second,
@@ -226,19 +219,19 @@ func DocumentProcessingWorkflow(ctx workflow.Context, input map[string]interface
 			},
 		}
 		failureCtx := workflow.WithActivityOptions(ctx, failureOpts)
-		
+
 		// Get retry count from workflow info
 		info := workflow.GetInfo(ctx)
 		retryCount := int(info.Attempt)
-		
+
 		storeErr := workflow.ExecuteActivity(failureCtx, queueActivities.StoreFailureDetails, jobID, err.Error(), retryCount).Get(ctx, nil)
 		if storeErr != nil {
 			logger.Error("⚠️ Failed to store failure details", "error", storeErr)
 		}
-		
+
 		return nil, err
 	}
-	
+
 	// Store page results for potential timeout handling
 	partialPageResults = pageResults
 
@@ -372,7 +365,7 @@ func processPageChunk(
 
 			if err != nil {
 				logger.Error("❌ Page processing failed", "page", globalIndex+1, "error", err)
-				
+
 				// Check if this is a timeout error
 				if workflow.IsTimeoutError(err) {
 					logger.Error("⏱️ Page processing timeout", "page", globalIndex+1, "error", err)

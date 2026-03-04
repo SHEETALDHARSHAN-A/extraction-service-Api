@@ -83,6 +83,7 @@ MODEL_PATH: str  = os.getenv("GLM_MODEL_PATH", "zai-org/GLM-OCR")
 MOCK_MODE: bool  = os.getenv("IDEP_MOCK_INFERENCE", "false").lower() == "true"
 STRICT_REAL: bool = os.getenv("IDEP_STRICT_REAL",    "true").lower() == "true"
 DEFAULT_PRECISION: str = os.getenv("GLM_PRECISION_MODE", "normal").lower()
+GLM_ONLY_LAYOUT: bool = os.getenv("GLM_ONLY_LAYOUT", "true").lower() == "true"
 
 # """ Error Hierarchy """""""""""""""""""""""""""""""""""""""""""""""""""""""
 
@@ -566,40 +567,40 @@ class TritonPythonModel:
             MOCK_MODE = True
             return
 
-        # "" PP-DocLayout for spatial stage """"""""""""""""""""""""""""""""
-        # Try to import PaddleOCR at initialization time (in case it was installed after module import)
-        paddleocr_available = _PADDLEOCR_OK
-        if not paddleocr_available:
-            try:
-                from paddleocr import PPStructureV3 as _PPStructure  # type: ignore  # noqa: F401
-                paddleocr_available = True
-                logger.info("... PaddleOCR detected at initialization time")
-            except ImportError:
-                logger.info("PaddleOCR not available -- running full-page OCR (no layout split)")
-        
-        if paddleocr_available:
-            try:
-                # PaddleOCR will download models automatically to ~/.paddleocr if not found
-                paddleocr_home = os.getenv("PADDLEOCR_HOME", None)
-                from paddleocr import PPStructureV3
-                
-                # PPStructureV3 parameters:
-                # - layout_detection_model_dir: Path to layout detection model
-                # - use_table_recognition: Enable table recognition
-                # - ocr_version: OCR version (default is 'PP-OCRv4')
-                if paddleocr_home and os.path.exists(paddleocr_home):
-                    self.layout_engine = PPStructureV3(
-                        layout_detection_model_dir=paddleocr_home,
-                        use_table_recognition=True,
-                    )
-                else:
-                    # Use default model path (will auto-download)
-                    self.layout_engine = PPStructureV3(
-                        use_table_recognition=True,
-                    )
-                logger.info("... PP-DocLayout-V3 ready (PaddleOCR layout detection enabled)")
-            except Exception as exc:
-                logger.warning("PP-DocLayout init failed (%s) -- layout stage disabled", exc)
+        # "" Layout engine policy """""""""""""""""""""""""""""""""
+        # Default is GLM-only mode for maximum GPU utilization and lower latency.
+        # Set GLM_ONLY_LAYOUT=false to re-enable Paddle layout initialization.
+        if GLM_ONLY_LAYOUT:
+            self.layout_engine = None
+            logger.info("GLM-only layout mode enabled (Paddle layout disabled)")
+        else:
+            # Try to import PaddleOCR at initialization time (in case it was installed after module import)
+            paddleocr_available = _PADDLEOCR_OK
+            if not paddleocr_available:
+                try:
+                    from paddleocr import PPStructureV3 as _PPStructure  # type: ignore  # noqa: F401
+                    paddleocr_available = True
+                    logger.info("... PaddleOCR detected at initialization time")
+                except ImportError:
+                    logger.info("PaddleOCR not available -- running full-page OCR (no layout split)")
+
+            if paddleocr_available:
+                try:
+                    paddleocr_home = os.getenv("PADDLEOCR_HOME", None)
+                    from paddleocr import PPStructureV3
+
+                    if paddleocr_home and os.path.exists(paddleocr_home):
+                        self.layout_engine = PPStructureV3(
+                            layout_detection_model_dir=paddleocr_home,
+                            use_table_recognition=True,
+                        )
+                    else:
+                        self.layout_engine = PPStructureV3(
+                            use_table_recognition=True,
+                        )
+                    logger.info("... PP-DocLayout-V3 ready (PaddleOCR layout detection enabled)")
+                except Exception as exc:
+                    logger.warning("PP-DocLayout init failed (%s) -- layout stage disabled", exc)
 
     def finalize(self) -> None:
         """
@@ -731,6 +732,7 @@ class TritonPythonModel:
                 output_format=output_format,
                 include_coords=include_coords,
                 include_word_conf=include_word_conf,
+                include_page_layout=include_page_layout,
                 max_tokens=max_tokens,
                 precision=precision,
             )
@@ -792,6 +794,7 @@ class TritonPythonModel:
         output_format: str,
         include_coords: bool, 
         include_word_conf: bool, 
+        include_page_layout: bool,
         max_tokens: int, 
         precision: str,
     ) -> dict:
@@ -817,31 +820,26 @@ class TritonPythonModel:
         elements: list = []
         total_pt = total_ct = 0
 
-        if self.layout_engine is not None and include_coords and not prompt_override:
-            # Use layout detection with task-specific prompts only when no custom prompt provided
-            regions = self._detect_layout(img)
-            for i, region in enumerate(regions):
-                bbox   = region["bbox"]          # [x1, y1, x2, y2]
-                label  = region["label"]
-                task   = LABEL_TO_TASK.get(label, "text")
-                prompt = TASK_PROMPTS[task]
-                crop   = img.crop(bbox)
-                content, pt, ct = self._run_glm_ocr(crop, prompt, max_tokens, precision, output_format)
-                total_pt += pt; total_ct += ct
-                elements.append(_make_element(i, label, content, list(map(int, bbox)),
-                                              region.get("confidence", 0.90)))
-        else:
-            # Use custom prompt if provided, otherwise use format-based prompt
-            prompt  = prompt_override if prompt_override else _format_to_prompt(output_format)
-            content, pt, ct = self._run_glm_ocr(img, prompt, max_tokens, precision, output_format)
-            total_pt += pt; total_ct += ct
-            elements.append(_make_element(
-                0, "page", content,
-                [0, 0, page_w, page_h] if include_coords else None, 0.92,
-            ))
+        # GLM-only fast path: single full-page generation for all formats/options.
+        # This avoids CPU-heavy Paddle layout + repeated region-level GLM calls.
+        prompt = prompt_override if prompt_override else _format_to_prompt(output_format)
+        content, pt, ct = self._run_glm_ocr(img, prompt, max_tokens, precision, output_format)
+        total_pt += pt
+        total_ct += ct
 
-        if include_word_conf and precision in ("high", "precision"):
-            elements = self._enrich_word_confidence(elements, img)
+        elements = _build_glm_only_elements(
+            content=content,
+            output_format=output_format,
+            page_w=page_w,
+            page_h=page_h,
+            include_coords=include_coords,
+            include_page_layout=include_page_layout,
+        )
+
+        # Word confidence in fast mode is generated from existing content and bboxes
+        # to avoid additional model.generate() passes.
+        if include_word_conf:
+            elements = _enrich_word_confidence_fast(elements)
 
         return _assemble_result(elements, page_w, page_h, "zai-org/GLM-OCR",
                                 "native", precision, total_pt, total_ct, output_format)
@@ -1260,6 +1258,71 @@ def _approximate_word_bboxes(words: list, parent_bbox: list) -> list:
          "confidence": 0.93}
         for i, w in enumerate(words)
     ]
+
+
+def _label_from_line(line: str) -> str:
+    s = line.strip()
+    if not s:
+        return "text"
+    if s.startswith("#"):
+        return "title"
+    if s.startswith("|") and s.endswith("|"):
+        return "table"
+    if s.startswith("$$") or "\\frac" in s or "\\int" in s:
+        return "formula"
+    return "text"
+
+
+def _build_glm_only_elements(
+    content: str,
+    output_format: str,
+    page_w: int,
+    page_h: int,
+    include_coords: bool,
+    include_page_layout: bool,
+) -> list[dict]:
+    # Structured formats stay as one element; textual formats are split into line-level
+    # elements so coordinate-rich responses remain useful without Paddle layout.
+    single_element_formats = {"json", "table", "key_value", "structured"}
+    elements: list[dict] = []
+
+    if output_format in single_element_formats:
+        bbox = [0, 0, page_w, page_h] if include_coords else None
+        extra = {"layout_type": output_format} if include_page_layout else None
+        elements.append(_make_element(0, output_format, content, bbox, 0.92, extra))
+        return elements
+
+    lines = [line for line in (content or "").splitlines() if line.strip()]
+    if not lines:
+        bbox = [0, 0, page_w, page_h] if include_coords else None
+        extra = {"layout_type": "text"} if include_page_layout else None
+        return [_make_element(0, "text", content or "", bbox, 0.92, extra)]
+
+    line_h = max(12, page_h // max(len(lines), 1))
+    y = 0
+    for i, line in enumerate(lines):
+        y1 = min(y, page_h - 1)
+        y2 = min(page_h, y1 + line_h)
+        bbox = [0, y1, page_w, y2] if include_coords else None
+        label = _label_from_line(line)
+        extra = {"layout_type": label} if include_page_layout else None
+        elements.append(_make_element(i, label, line, bbox, 0.92, extra))
+        y += line_h
+
+    return elements
+
+
+def _enrich_word_confidence_fast(elements: list[dict]) -> list[dict]:
+    for el in elements:
+        bbox = el.get("bbox_2d")
+        content = str(el.get("content", "") or "")
+        if not bbox or not content:
+            continue
+        words = [w for w in content.replace("\n", " ").split(" ") if w.strip()]
+        if not words:
+            continue
+        el["words"] = _approximate_word_bboxes(words, bbox)
+    return elements
 
 
 def _field_match(key: str, field: str) -> bool:

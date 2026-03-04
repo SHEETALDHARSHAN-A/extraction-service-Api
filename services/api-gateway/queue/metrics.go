@@ -119,6 +119,7 @@ func (q *RedisQueue) UpdateQueueMetrics(ctx context.Context) (*QueueMetrics, err
 	if err != nil {
 		totalEnqueued = 0
 	}
+	_ = totalEnqueued
 	totalEnqueuedCounter.Add(0) // Initialize if not set
 
 	return &QueueMetrics{
