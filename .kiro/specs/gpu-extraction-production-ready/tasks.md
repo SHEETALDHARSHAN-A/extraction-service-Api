@@ -385,24 +385,24 @@ This implementation plan transforms the GPU extraction system into a production-
     - Display error breakdown by type
     - _Requirements: 6.6_
 
-- [ ] 16. Integration and end-to-end testing
-  - [ ]* 16.1 Write integration test for complete extraction flow
+- [x] 16. Integration and end-to-end testing
+  - [x]* 16.1 Write integration test for complete extraction flow
     - Test upload → queue → process → retrieve results
     - Verify all components work together
   
-  - [ ]* 16.2 Write integration test for concurrent request handling
+  - [x]* 16.2 Write integration test for concurrent request handling
     - Submit 10 concurrent requests
     - Verify all complete successfully with proper queueing
   
-  - [ ]* 16.3 Write integration test for large document processing
+  - [x]* 16.3 Write integration test for large document processing
     - Submit 20-page PDF
     - Verify parallel processing and result aggregation
   
-  - [ ]* 16.4 Write integration test for error recovery
+  - [x]* 16.4 Write integration test for error recovery
     - Trigger GPU memory error
     - Verify retry and eventual success
   
-  - [ ]* 16.5 Write integration test for queue full scenario
+  - [x]* 16.5 Write integration test for queue full scenario
     - Fill queue to capacity
     - Verify HTTP 429 responses and recovery
 

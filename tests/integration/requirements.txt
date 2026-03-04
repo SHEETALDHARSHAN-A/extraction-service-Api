@@ -1,0 +1,19 @@
+# Integration Test Dependencies
+
+# Testing framework
+pytest>=7.4.0
+pytest-timeout>=2.1.0
+pytest-xdist>=3.3.1  # For parallel test execution
+
+# HTTP client
+requests>=2.31.0
+
+# Image processing (for creating test documents)
+Pillow>=10.0.0
+
+# PDF generation (for large document tests)
+reportlab>=4.0.0
+
+# Optional: For better test output
+pytest-html>=3.2.0  # HTML test reports
+pytest-json-report>=1.5.0  # JSON test reports
