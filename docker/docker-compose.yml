@@ -120,7 +120,7 @@ services:
     volumes:
       - paddleocr_models:/app/models
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8001/health', timeout=5).raise_for_status()"]
+      test: [ "CMD", "python", "-c", "import requests; requests.get('http://localhost:8001/health', timeout=5).raise_for_status()" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -155,7 +155,7 @@ services:
     volumes:
       - glm_models:/opt/models
     healthcheck:
-      test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:8002/health', timeout=5).raise_for_status()"]
+      test: [ "CMD", "python3", "-c", "import requests; requests.get('http://localhost:8002/health', timeout=5).raise_for_status()" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -171,7 +171,7 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     restart: on-failure
     shm_size: '2g'
 
@@ -226,7 +226,7 @@ services:
               count: 1
               capabilities: [ gpu ]
     restart: on-failure
-    shm_size: '256m'
+    shm_size: '4g'
 
   # ═══════════════════════════════════════════
   # Infrastructure
@@ -247,7 +247,7 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "tctl", "--address", "localhost:7233", "cluster", "health"]
+      test: [ "CMD", "tctl", "--address", "localhost:7233", "cluster", "health" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -273,7 +273,7 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -295,7 +295,7 @@ services:
       - redis_data:/data
     command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -321,7 +321,7 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -382,6 +382,7 @@ volumes:
   paddleocr_models:
   glm_models:
   redis_data:
+
 
 networks:
   default:
