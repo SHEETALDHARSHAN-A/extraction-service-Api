@@ -98,6 +98,7 @@ func parseOptions(input map[string]interface{}) ExtractionOptions {
 		MaxPages:      "0",
 		Temperature:   "0.0",
 		MaxTokens:     "4096",
+		ExtractFields: []string{},
 	}
 
 	if v, ok := input["output_formats"].(string); ok {

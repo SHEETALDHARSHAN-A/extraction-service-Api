@@ -381,9 +381,29 @@ def _validate_inputs(image_ref: str, prompt_override: str, options: dict) -> tup
             raise ValueError(f"max_tokens must be an integer between 64 and 8192: {e}")
     
     if "extract_fields" in options:
-        if not isinstance(options["extract_fields"], list):
-            raise ValueError("extract_fields must be a list")
-        validated_options["extract_fields"] = [str(f) for f in options["extract_fields"]]
+        raw_extract_fields = options.get("extract_fields")
+        if raw_extract_fields is None:
+            validated_options["extract_fields"] = []
+        elif isinstance(raw_extract_fields, list):
+            validated_options["extract_fields"] = [str(f) for f in raw_extract_fields if str(f).strip()]
+        elif isinstance(raw_extract_fields, str):
+            raw_extract_fields = raw_extract_fields.strip()
+            if not raw_extract_fields:
+                validated_options["extract_fields"] = []
+            else:
+                try:
+                    parsed_fields = json.loads(raw_extract_fields)
+                    if isinstance(parsed_fields, list):
+                        validated_options["extract_fields"] = [str(f) for f in parsed_fields if str(f).strip()]
+                    else:
+                        validated_options["extract_fields"] = [f.strip() for f in raw_extract_fields.split(",") if f.strip()]
+                except Exception:
+                    validated_options["extract_fields"] = [f.strip() for f in raw_extract_fields.split(",") if f.strip()]
+        else:
+            try:
+                validated_options["extract_fields"] = [str(f) for f in list(raw_extract_fields) if str(f).strip()]
+            except Exception:
+                raise ValueError("extract_fields must be a list")
     
     # Copy over any other options that weren't explicitly validated
     for key, value in options.items():

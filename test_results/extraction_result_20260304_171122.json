@@ -1,0 +1,56 @@
+{
+  "document_confidence": 0.95,
+  "extraction_time": 7.731511339,
+  "job_id": "0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1",
+  "model": "zai-org/GLM-OCR",
+  "output_formats": "json",
+  "page_count": 1,
+  "precision_mode": "normal",
+  "raw_pages": {
+    "confidence": 0.9200000166893005,
+    "job_id": "0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1",
+    "markdown": "INVOICE\n\nInvoice # INV-2026-0042\n\nDate: March 3, 2026\n\nAmount $1,234.56",
+    "model": "zai-org/GLM-OCR",
+    "page_count": 1,
+    "pages": [
+      {
+        "page": 1,
+        "result": {
+          "confidence": 0.92,
+          "markdown": "INVOICE\n\nInvoice # INV-2026-0042\n\nDate: March 3, 2026\n\nAmount $1,234.56",
+          "mode": "native",
+          "model": "zai-org/GLM-OCR",
+          "pages": [
+            {
+              "elements": [
+                {
+                  "bbox_2d": [
+                    0,
+                    0,
+                    800,
+                    600
+                  ],
+                  "confidence": 0.92,
+                  "content": "INVOICE\n\nInvoice # INV-2026-0042\n\nDate: March 3, 2026\n\nAmount $1,234.56",
+                  "index": 0,
+                  "label": "page"
+                }
+              ],
+              "height": 600,
+              "page": 1,
+              "width": 800
+            }
+          ],
+          "precision": "normal",
+          "usage": {
+            "completion_tokens": 43,
+            "prompt_tokens": 621
+          }
+        }
+      }
+    ],
+    "precision": "normal"
+  },
+  "result": "{\"confidence\":0.9200000166893005,\"job_id\":\"0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1\",\"markdown\":\"INVOICE\\n\\nInvoice # INV-2026-0042\\n\\nDate: March 3, 2026\\n\\nAmount $1,234.56\",\"model\":\"zai-org/GLM-OCR\",\"page_count\":1,\"pages\":[{\"page\":1,\"result\":{\"pages\":[{\"page\":1,\"width\":800,\"height\":600,\"elements\":[{\"index\":0,\"label\":\"page\",\"content\":\"INVOICE\\n\\nInvoice # INV-2026-0042\\n\\nDate: March 3, 2026\\n\\nAmount $1,234.56\",\"bbox_2d\":[0,0,800,600],\"confidence\":0.92}]}],\"markdown\":\"INVOICE\\n\\nInvoice # INV-2026-0042\\n\\nDate: March 3, 2026\\n\\nAmount $1,234.56\",\"model\":\"zai-org/GLM-OCR\",\"mode\":\"native\",\"precision\":\"normal\",\"confidence\":0.92,\"usage\":{\"prompt_tokens\":621,\"completion_tokens\":43}}}],\"precision\":\"normal\"}",
+  "timestamp": "2026-03-04T11:41:16Z"
+}

@@ -1,0 +1,56 @@
+﻿{
+    "document_confidence":  0.95,
+    "extraction_time":  235.613945422,
+    "job_id":  "c48a70e7-ff01-49c0-8cce-5dc50bd18c38",
+    "model":  "zai-org/GLM-OCR",
+    "output_formats":  "json",
+    "page_count":  1,
+    "precision_mode":  "normal",
+    "raw_pages":  {
+                      "confidence":  0.9200000166893005,
+                      "job_id":  "c48a70e7-ff01-49c0-8cce-5dc50bd18c38",
+                      "markdown":  "INVOICE\n\nTHAPOVAN INFO SYSTEMS PRIVATE LIMITED\nKENCES TOWERS, IIND FLOOR, NO.1,\nRAMAKRISHNA STREET, T NAGAR, CHENNAI - 600017\nEMail: accounts@thapovan-inc.com\nGSTIN: 33AABCT9647C1ZE\n\nInvoice No. PC/120/24-25\nInvoice Date 30-Apr-24\nYour Ref\nDue Date\n\nS.No. Description Amount\n1 SAC / HSN Code : 998311\nConsultancy Charges For EPF \u0026 ESI, Shop and Estt.act, For the Month of April 2024\n5,000.00\nTotal 5,000.00\nOutput CGST 9% 450.00\nOutput SGST 9% 450.00\nGrand Total 5,900.00\n\nAmount in Words: INR Five Thousand Nine Hundred Only E.\u0026 O.E.\n\nBank Details\nBank Bank of Baroda\nBranch Kolathur\nA/c No. 19680200001617\nIFSC BARB0KOLATH\n\nNotes\n1) Please pay by Account Payee Crossed Cheque / Demand Draft payable at Chennai drawn in favor of ?Prompt Consultancy?.\n2) Discrepancies, if any should be intimated to us within seven days of invoice, failing which it will be construed as correct and binding.\n3) Subject to Chennai Jurisdiction only.\n\nReg. Office : No.84, Balaraman Street, Rajan Nagar, Kolathur, Chennai - 600099.\nE-Mail : admin@promptinbox.com / Mobile : 9841498822",
+                      "model":  "zai-org/GLM-OCR",
+                      "page_count":  1,
+                      "pages":  [
+                                    {
+                                        "page":  1,
+                                        "result":  {
+                                                       "confidence":  0.92,
+                                                       "markdown":  "INVOICE\n\nTHAPOVAN INFO SYSTEMS PRIVATE LIMITED\nKENCES TOWERS, IIND FLOOR, NO.1,\nRAMAKRISHNA STREET, T NAGAR, CHENNAI - 600017\nEMail: accounts@thapovan-inc.com\nGSTIN: 33AABCT9647C1ZE\n\nInvoice No. PC/120/24-25\nInvoice Date 30-Apr-24\nYour Ref\nDue Date\n\nS.No. Description Amount\n1 SAC / HSN Code : 998311\nConsultancy Charges For EPF \u0026 ESI, Shop and Estt.act, For the Month of April 2024\n5,000.00\nTotal 5,000.00\nOutput CGST 9% 450.00\nOutput SGST 9% 450.00\nGrand Total 5,900.00\n\nAmount in Words: INR Five Thousand Nine Hundred Only E.\u0026 O.E.\n\nBank Details\nBank Bank of Baroda\nBranch Kolathur\nA/c No. 19680200001617\nIFSC BARB0KOLATH\n\nNotes\n1) Please pay by Account Payee Crossed Cheque / Demand Draft payable at Chennai drawn in favor of ?Prompt Consultancy?.\n2) Discrepancies, if any should be intimated to us within seven days of invoice, failing which it will be construed as correct and binding.\n3) Subject to Chennai Jurisdiction only.\n\nReg. Office : No.84, Balaraman Street, Rajan Nagar, Kolathur, Chennai - 600099.\nE-Mail : admin@promptinbox.com / Mobile : 9841498822",
+                                                       "mode":  "native",
+                                                       "model":  "zai-org/GLM-OCR",
+                                                       "pages":  [
+                                                                     {
+                                                                         "elements":  [
+                                                                                          {
+                                                                                              "bbox_2d":  [
+                                                                                                              0,
+                                                                                                              0,
+                                                                                                              2480,
+                                                                                                              3505
+                                                                                                          ],
+                                                                                              "confidence":  0.92,
+                                                                                              "content":  "INVOICE\n\nTHAPOVAN INFO SYSTEMS PRIVATE LIMITED\nKENCES TOWERS, IIND FLOOR, NO.1,\nRAMAKRISHNA STREET, T NAGAR, CHENNAI - 600017\nEMail: accounts@thapovan-inc.com\nGSTIN: 33AABCT9647C1ZE\n\nInvoice No. PC/120/24-25\nInvoice Date 30-Apr-24\nYour Ref\nDue Date\n\nS.No. Description Amount\n1 SAC / HSN Code : 998311\nConsultancy Charges For EPF \u0026 ESI, Shop and Estt.act, For the Month of April 2024\n5,000.00\nTotal 5,000.00\nOutput CGST 9% 450.00\nOutput SGST 9% 450.00\nGrand Total 5,900.00\n\nAmount in Words: INR Five Thousand Nine Hundred Only E.\u0026 O.E.\n\nBank Details\nBank Bank of Baroda\nBranch Kolathur\nA/c No. 19680200001617\nIFSC BARB0KOLATH\n\nNotes\n1) Please pay by Account Payee Crossed Cheque / Demand Draft payable at Chennai drawn in favor of ?Prompt Consultancy?.\n2) Discrepancies, if any should be intimated to us within seven days of invoice, failing which it will be construed as correct and binding.\n3) Subject to Chennai Jurisdiction only.\n\nReg. Office : No.84, Balaraman Street, Rajan Nagar, Kolathur, Chennai - 600099.\nE-Mail : admin@promptinbox.com / Mobile : 9841498822",
+                                                                                              "index":  0,
+                                                                                              "label":  "page"
+                                                                                          }
+                                                                                      ],
+                                                                         "height":  3505,
+                                                                         "page":  1,
+                                                                         "width":  2480
+                                                                     }
+                                                                 ],
+                                                       "precision":  "normal",
+                                                       "usage":  {
+                                                                     "completion_tokens":  447,
+                                                                     "prompt_tokens":  6057
+                                                                 }
+                                                   }
+                                    }
+                                ],
+                      "precision":  "normal"
+                  },
+    "result":  "{\"confidence\":0.9200000166893005,\"job_id\":\"c48a70e7-ff01-49c0-8cce-5dc50bd18c38\",\"markdown\":\"INVOICE\\n\\nTHAPOVAN INFO SYSTEMS PRIVATE LIMITED\\nKENCES TOWERS, IIND FLOOR, NO.1,\\nRAMAKRISHNA STREET, T NAGAR, CHENNAI - 600017\\nEMail: accounts@thapovan-inc.com\\nGSTIN: 33AABCT9647C1ZE\\n\\nInvoice No. PC/120/24-25\\nInvoice Date 30-Apr-24\\nYour Ref\\nDue Date\\n\\nS.No. Description Amount\\n1 SAC / HSN Code : 998311\\nConsultancy Charges For EPF \\u0026 ESI, Shop and Estt.act, For the Month of April 2024\\n5,000.00\\nTotal 5,000.00\\nOutput CGST 9% 450.00\\nOutput SGST 9% 450.00\\nGrand Total 5,900.00\\n\\nAmount in Words: INR Five Thousand Nine Hundred Only E.\\u0026 O.E.\\n\\nBank Details\\nBank Bank of Baroda\\nBranch Kolathur\\nA/c No. 19680200001617\\nIFSC BARB0KOLATH\\n\\nNotes\\n1) Please pay by Account Payee Crossed Cheque / Demand Draft payable at Chennai drawn in favor of ?Prompt Consultancy?.\\n2) Discrepancies, if any should be intimated to us within seven days of invoice, failing which it will be construed as correct and binding.\\n3) Subject to Chennai Jurisdiction only.\\n\\nReg. Office : No.84, Balaraman Street, Rajan Nagar, Kolathur, Chennai - 600099.\\nE-Mail : admin@promptinbox.com / Mobile : 9841498822\",\"model\":\"zai-org/GLM-OCR\",\"page_count\":1,\"pages\":[{\"page\":1,\"result\":{\"pages\":[{\"page\":1,\"width\":2480,\"height\":3505,\"elements\":[{\"index\":0,\"label\":\"page\",\"content\":\"INVOICE\\n\\nTHAPOVAN INFO SYSTEMS PRIVATE LIMITED\\nKENCES TOWERS, IIND FLOOR, NO.1,\\nRAMAKRISHNA STREET, T NAGAR, CHENNAI - 600017\\nEMail: accounts@thapovan-inc.com\\nGSTIN: 33AABCT9647C1ZE\\n\\nInvoice No. PC/120/24-25\\nInvoice Date 30-Apr-24\\nYour Ref\\nDue Date\\n\\nS.No. Description Amount\\n1 SAC / HSN Code : 998311\\nConsultancy Charges For EPF \\u0026 ESI, Shop and Estt.act, For the Month of April 2024\\n5,000.00\\nTotal 5,000.00\\nOutput CGST 9% 450.00\\nOutput SGST 9% 450.00\\nGrand Total 5,900.00\\n\\nAmount in Words: INR Five Thousand Nine Hundred Only E.\\u0026 O.E.\\n\\nBank Details\\nBank Bank of Baroda\\nBranch Kolathur\\nA/c No. 19680200001617\\nIFSC BARB0KOLATH\\n\\nNotes\\n1) Please pay by Account Payee Crossed Cheque / Demand Draft payable at Chennai drawn in favor of ?Prompt Consultancy?.\\n2) Discrepancies, if any should be intimated to us within seven days of invoice, failing which it will be construed as correct and binding.\\n3) Subject to Chennai Jurisdiction only.\\n\\nReg. Office : No.84, Balaraman Street, Rajan Nagar, Kolathur, Chennai - 600099.\\nE-Mail : admin@promptinbox.com / Mobile : 9841498822\",\"bbox_2d\":[0,0,2480,3505],\"confidence\":0.92}]}],\"markdown\":\"INVOICE\\n\\nTHAPOVAN INFO SYSTEMS PRIVATE LIMITED\\nKENCES TOWERS, IIND FLOOR, NO.1,\\nRAMAKRISHNA STREET, T NAGAR, CHENNAI - 600017\\nEMail: accounts@thapovan-inc.com\\nGSTIN: 33AABCT9647C1ZE\\n\\nInvoice No. PC/120/24-25\\nInvoice Date 30-Apr-24\\nYour Ref\\nDue Date\\n\\nS.No. Description Amount\\n1 SAC / HSN Code : 998311\\nConsultancy Charges For EPF \\u0026 ESI, Shop and Estt.act, For the Month of April 2024\\n5,000.00\\nTotal 5,000.00\\nOutput CGST 9% 450.00\\nOutput SGST 9% 450.00\\nGrand Total 5,900.00\\n\\nAmount in Words: INR Five Thousand Nine Hundred Only E.\\u0026 O.E.\\n\\nBank Details\\nBank Bank of Baroda\\nBranch Kolathur\\nA/c No. 19680200001617\\nIFSC BARB0KOLATH\\n\\nNotes\\n1) Please pay by Account Payee Crossed Cheque / Demand Draft payable at Chennai drawn in favor of ?Prompt Consultancy?.\\n2) Discrepancies, if any should be intimated to us within seven days of invoice, failing which it will be construed as correct and binding.\\n3) Subject to Chennai Jurisdiction only.\\n\\nReg. Office : No.84, Balaraman Street, Rajan Nagar, Kolathur, Chennai - 600099.\\nE-Mail : admin@promptinbox.com / Mobile : 9841498822\",\"model\":\"zai-org/GLM-OCR\",\"mode\":\"native\",\"precision\":\"normal\",\"confidence\":0.92,\"usage\":{\"prompt_tokens\":6057,\"completion_tokens\":447}}}],\"precision\":\"normal\"}",
+    "timestamp":  "2026-03-04T11:47:56Z"
+}

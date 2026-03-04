@@ -1,0 +1,53 @@
+GPU Extraction Test - Service Logs
+Timestamp: 2026-03-04T17:11:22.335993
+================================================================================
+
+
+================================================================================
+Service: docker-glm-ocr-service-1
+================================================================================
+
+No logs captured
+
+================================================================================
+Service: docker-paddleocr-service-1
+================================================================================
+
+No logs captured
+
+================================================================================
+Service: docker-api-gateway-1
+================================================================================
+
+[17:11:07.677] 2026/03/04 11:41:07 Uploaded raw/0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1/test_invoice_local.png (7781 bytes) to idep-documents/raw/0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1/test_invoice_local.png
+[17:11:08.534] [GIN] 2026/03/04 - 11:41:08 | 202 |  1.201736189s |      172.18.0.1 | POST     "/jobs/upload"
+[17:11:08.659] [GIN] 2026/03/04 - 11:41:08 | 200 |    78.65863ms |      172.18.0.1 | GET      "/jobs/0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1"
+[17:11:10.813] [GIN] 2026/03/04 - 11:41:10 | 200 |   10.285561ms |      172.18.0.1 | GET      "/jobs/0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1"
+[17:11:11.559] [GIN] 2026/03/04 - 11:41:11 | 200 |    3.957821ms |     172.18.0.15 | GET      "/metrics"
+[17:11:12.853] [GIN] 2026/03/04 - 11:41:12 | 200 |    7.735009ms |      172.18.0.1 | GET      "/jobs/0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1"
+[17:11:14.875] [GIN] 2026/03/04 - 11:41:14 | 200 |    9.827369ms |      172.18.0.1 | GET      "/jobs/0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1"
+[17:11:16.930] [GIN] 2026/03/04 - 11:41:16 | 200 |   13.246221ms |      172.18.0.1 | GET      "/jobs/0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1"
+[17:11:19.103] [GIN] 2026/03/04 - 11:41:19 | 200 |  137.048087ms |      172.18.0.1 | GET      "/jobs/0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1"
+[17:11:19.191] [GIN] 2026/03/04 - 11:41:19 | 200 |   38.776249ms |      172.18.0.1 | GET      "/jobs/0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1/result"
+
+================================================================================
+Service: docker-temporal-worker-1
+================================================================================
+
+[17:11:08.673] 2026/03/04 11:41:08 INFO  🚀 DocumentProcessingWorkflow started Namespace default TaskQueue document-processing-task-queue WorkerID 1@8a23eadaf119@ WorkflowType DocumentProcessingWorkflow WorkflowID doc-processing-0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1 RunID 22911af5-e3d2-4fe5-ac21-c352eafcca58 Attempt 1 job_id 0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1 filename test_invoice_local.png output_formats json
+[17:11:08.675] 2026/03/04 11:41:08 INFO  📄 Step 1: Preprocessing Namespace default TaskQueue document-processing-task-queue WorkerID 1@8a23eadaf119@ WorkflowType DocumentProcessingWorkflow WorkflowID doc-processing-0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1 RunID 22911af5-e3d2-4fe5-ac21-c352eafcca58 Attempt 1
+[17:11:08.675] 2026/03/04 11:41:08 DEBUG ExecuteActivity Namespace default TaskQueue document-processing-task-queue WorkerID 1@8a23eadaf119@ WorkflowType DocumentProcessingWorkflow WorkflowID doc-processing-0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1 RunID 22911af5-e3d2-4fe5-ac21-c352eafcca58 Attempt 1 ActivityID 5 ActivityType Preprocess
+[17:11:08.731] 2026/03/04 11:41:08 🔧 [Preprocess] job=0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1 enhance=true deskew=true
+[17:11:08.912] 2026/03/04 11:41:08 INFO  ✅ Preprocessing complete Namespace default TaskQueue document-processing-task-queue WorkerID 1@8a23eadaf119@ WorkflowType DocumentProcessingWorkflow WorkflowID doc-processing-0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1 RunID 22911af5-e3d2-4fe5-ac21-c352eafcca58 Attempt 1 pages 1
+[17:11:08.914] 2026/03/04 11:41:08 INFO  🧠 Step 2: AI Extraction Namespace default TaskQueue document-processing-task-queue WorkerID 1@8a23eadaf119@ WorkflowType DocumentProcessingWorkflow WorkflowID doc-processing-0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1 RunID 22911af5-e3d2-4fe5-ac21-c352eafcca58 Attempt 1 formats json
+[17:11:08.916] 2026/03/04 11:41:08 DEBUG ExecuteActivity Namespace default TaskQueue document-processing-task-queue WorkerID 1@8a23eadaf119@ WorkflowType DocumentProcessingWorkflow WorkflowID doc-processing-0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1 RunID 22911af5-e3d2-4fe5-ac21-c352eafcca58 Attempt 1 ActivityID 11 ActivityType CallTriton
+[17:11:08.994] 2026/03/04 11:41:08 🧠 [Triton] job=0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1 pages=1 formats=json precision=normal
+[17:11:08.994] 2026/03/04 11:41:08    Prompt: "Text Recognition:"  Options: {"extract_fields":[],"granularity":"block","include_coordinates":true,"include_line_confidence":false,"include_page_layout":false,"include_word_confidence":false,"language":"auto","max_tokens":"4096","output_format":"json","temperature":"0.0"}
+[17:11:16.725] 2026/03/04 11:41:16 ✅ [Triton] job=0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1 confidence=0.92 time=7.73s
+[17:11:16.787] 2026/03/04 11:41:16 INFO  ✅ Extraction complete Namespace default TaskQueue document-processing-task-queue WorkerID 1@8a23eadaf119@ WorkflowType DocumentProcessingWorkflow WorkflowID doc-processing-0e73d8c3-6cb8-4f3a-af01-24f944a2c0f1 RunID 22911af5-e3d2-4fe5-ac21-c352eafcca58 Attempt 1 confidence 0.9200000166893005
+
+================================================================================
+Service: docker-postprocessing-service-1
+================================================================================
+
+No logs captured
