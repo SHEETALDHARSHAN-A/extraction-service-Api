@@ -4,8 +4,11 @@ import io
 import base64
 import logging
 import time
+import os
+import tempfile
 from typing import Dict, Any, Optional, Tuple
 from PIL import Image
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,8 @@ class GLMInferenceEngine:
     def _load_model(self) -> None:
         """Load the GLM-OCR model."""
         try:
+            # Helps reduce CUDA allocator fragmentation on small VRAM cards.
+            os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
             import torch
             from transformers import AutoProcessor, AutoModelForImageTextToText
             
@@ -106,44 +111,61 @@ class GLMInferenceEngine:
         try:
             # Decode image
             image = self._decode_base64_image(image_base64)
-            
-            # Prepare inputs
-            inputs = self.processor(
-                text=prompt,
-                images=image,
-                return_tensors="pt"
-            )
-            
-            # Move inputs to device
-            if self.device == "cuda":
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            
-            # Generate
+            image = self._resize_for_low_vram(image)
+
             import torch
-            with torch.no_grad():
+            run_configs = [{
+                "max_tokens": max_tokens,
+                "max_edge": settings.low_vram_max_image_edge,
+                "label": "primary",
+            }]
+            if self.device == "cuda" and settings.low_vram_mode:
+                run_configs.append({
+                    "max_tokens": min(max_tokens, int(settings.low_vram_retry_max_tokens)),
+                    "max_edge": int(settings.low_vram_retry_image_edge),
+                    "label": "low-vram-retry",
+                })
+
+            last_error = None
+            for cfg in run_configs:
+                run_image = self._resize_image_to_edge(image, int(cfg["max_edge"]))
+                inputs = self._build_model_inputs(run_image, prompt)
+
+                # Move inputs to device
+                if self.device == "cuda":
+                    inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
                 try:
-                    outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=max_tokens,
-                        do_sample=False,
-                        num_beams=1
-                    )
+                    with torch.no_grad():
+                        outputs = self.model.generate(
+                            **inputs,
+                            max_new_tokens=int(cfg["max_tokens"]),
+                            use_cache=False,
+                            do_sample=False,
+                            num_beams=1,
+                        )
+                    break
                 except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
                     error_str = str(e).lower()
-                    if "out of memory" in error_str or "cuda" in error_str:
-                        logger.error(f"CUDA out-of-memory during inference: {e}")
-                        # Clear cache and re-raise
-                        torch.cuda.empty_cache()
-                        raise torch.cuda.OutOfMemoryError(
-                            f"CUDA out of memory during inference: {e}"
+                    if self.device == "cuda" and ("out of memory" in error_str or "cuda" in error_str):
+                        last_error = e
+                        logger.warning(
+                            "CUDA OOM during %s attempt (max_tokens=%s, max_edge=%s): %s",
+                            cfg["label"], cfg["max_tokens"], cfg["max_edge"], e,
                         )
+                        torch.cuda.empty_cache()
+                        continue
                     raise
+            else:
+                raise torch.cuda.OutOfMemoryError(
+                    f"CUDA out of memory during inference after retries: {last_error}"
+                )
             
             # Decode output
-            generated_text = self.processor.batch_decode(
-                outputs,
-                skip_special_tokens=True
-            )[0]
+            generated_text = self.processor.decode(
+                outputs[0][inputs["input_ids"].shape[1]:],
+                skip_special_tokens=False,
+            )
             
             # Extract content (remove prompt if present)
             content = generated_text
@@ -162,6 +184,52 @@ class GLMInferenceEngine:
         except Exception as e:
             logger.error(f"Inference failed: {e}")
             raise
+
+    def _build_model_inputs(self, image: Image.Image, prompt: str):
+        """Prepare chat-template inputs for GLM-OCR from image and prompt."""
+        temp_image_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_image_file:
+                image.save(temp_image_file.name, format="PNG")
+                temp_image_path = temp_image_file.name
+
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "url": temp_image_path},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+
+            inputs = self.processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+            inputs.pop("token_type_ids", None)
+            return inputs
+        finally:
+            if temp_image_path and os.path.exists(temp_image_path):
+                try:
+                    os.remove(temp_image_path)
+                except OSError:
+                    pass
+
+    def _resize_image_to_edge(self, image: Image.Image, max_edge: int) -> Image.Image:
+        """Resize image so its largest edge is at most max_edge."""
+        width, height = image.size
+        current_max = max(width, height)
+        if current_max <= max_edge:
+            return image
+
+        scale = max_edge / float(current_max)
+        new_width = max(1, int(width * scale))
+        new_height = max(1, int(height * scale))
+        return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
     
     def _decode_base64_image(self, image_base64: str) -> Image.Image:
         """
@@ -189,6 +257,27 @@ class GLMInferenceEngine:
         except Exception as e:
             logger.error(f"Failed to decode image: {e}")
             raise ValueError(f"Invalid base64 image: {e}")
+
+    def _resize_for_low_vram(self, image: Image.Image) -> Image.Image:
+        """Downscale very large images to reduce GPU memory spikes during generation."""
+        if not settings.low_vram_mode:
+            return image
+
+        max_edge = max(256, int(settings.low_vram_max_image_edge))
+        width, height = image.size
+        current_max = max(width, height)
+
+        if current_max <= max_edge:
+            return image
+
+        scale = max_edge / float(current_max)
+        new_width = max(1, int(width * scale))
+        new_height = max(1, int(height * scale))
+
+        logger.info(
+            f"Low-VRAM resize applied: {width}x{height} -> {new_width}x{new_height}"
+        )
+        return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
     
     def cleanup(self) -> None:
         """Clean up resources."""

@@ -20,6 +20,8 @@ type WorkerConfig struct {
 	MinioAccessKey     string
 	MinioSecretKey     string
 	MinioBucket        string
+	StorageDriver      string // "minio" (default) or "local"
+	LocalStorageRoot   string // root dir for local storage
 	RedisHost          string
 	RedisPort          string
 	RedisPassword      string
@@ -42,6 +44,8 @@ func Load() *WorkerConfig {
 		MinioAccessKey:     getEnv("MINIO_ACCESS_KEY", "minioadmin"),
 		MinioSecretKey:     getEnv("MINIO_SECRET_KEY", "minioadmin"),
 		MinioBucket:        getEnv("MINIO_BUCKET", "idep-documents"),
+		StorageDriver:      getEnv("STORAGE_DRIVER", "minio"),
+		LocalStorageRoot:   getEnv("LOCAL_STORAGE_ROOT", ".local/data/storage"),
 		RedisHost:          getEnv("REDIS_HOST", "localhost"),
 		RedisPort:          getEnv("REDIS_PORT", "6379"),
 		RedisPassword:      getEnv("REDIS_PASSWORD", ""),

@@ -28,16 +28,16 @@ func JSONCallOption() grpc.CallOption {
 // --- Types ---
 
 type PostProcessRequest struct {
-	RawContent string
-	JobId      string
-	RedactPii  bool
+	RawContent string `json:"raw_content"`
+	JobId      string `json:"job_id"`
+	RedactPii  bool   `json:"redact_pii"`
 }
 
 type PostProcessResponse struct {
-	StructuredContent string
-	ConfidenceScore   float32
-	Status            string
-	Error             string
+	StructuredContent string  `json:"structured_content"`
+	ConfidenceScore   float32 `json:"confidence_score"`
+	Status            string  `json:"status"`
+	Error             string  `json:"error"`
 }
 
 // --- Server Interface ---

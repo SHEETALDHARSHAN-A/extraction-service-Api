@@ -20,7 +20,7 @@ import (
 // BatchUploadHandler handles multi-document batch uploads
 type BatchUploadHandler struct {
 	DB             *gorm.DB
-	MinioStore     *storage.MinioClient
+	MinioStore     storage.StorageClient
 	TemporalClient client.Client
 	TaskQueue      string
 }
@@ -58,10 +58,10 @@ func (h *BatchUploadHandler) Handle(c *gin.Context) {
 		if hdr.Size > maxDocumentSize {
 			maxSizeMB := float64(maxDocumentSize) / (1024 * 1024)
 			providedSizeMB := float64(hdr.Size) / (1024 * 1024)
-			
+
 			log.Printf("❌ Document too large in batch: %s (%.2fMB) exceeds maximum of %.2fMB",
 				hdr.Filename, providedSizeMB, maxSizeMB)
-			
+
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
 				"error":            "Document too large",
 				"filename":         hdr.Filename,
@@ -77,6 +77,7 @@ func (h *BatchUploadHandler) Handle(c *gin.Context) {
 	outputFormats := c.DefaultPostForm("output_formats", "text")
 	customPrompt := c.DefaultPostForm("prompt", "")
 	includeCoordinates := c.DefaultPostForm("include_coordinates", "false") == "true"
+	fastMode := c.DefaultPostForm("fast_mode", "false") == "true"
 	includeWordConfidence := c.DefaultPostForm("include_word_confidence", "false") == "true"
 	includeLineConfidence := c.DefaultPostForm("include_line_confidence", "false") == "true"
 	includePageLayout := c.DefaultPostForm("include_page_layout", "false") == "true"
@@ -125,6 +126,7 @@ func (h *BatchUploadHandler) Handle(c *gin.Context) {
 	// Options map applied to every file in batch
 	options := map[string]interface{}{
 		"prompt":                  customPrompt,
+		"fast_mode":               fastMode,
 		"include_coordinates":     includeCoordinates,
 		"include_word_confidence": includeWordConfidence,
 		"include_line_confidence": includeLineConfidence,

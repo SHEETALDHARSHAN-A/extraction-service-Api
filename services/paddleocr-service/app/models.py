@@ -1,10 +1,14 @@
 """Pydantic models for PaddleOCR Layout Detection Service."""
 
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 
-class Region(BaseModel):
+class AppBaseModel(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+
+class Region(AppBaseModel):
     """Model for a detected document region."""
     
     index: int = Field(..., description="Sequential index of the region", ge=0)
@@ -48,7 +52,7 @@ class Region(BaseModel):
         }
 
 
-class PageDimensions(BaseModel):
+class PageDimensions(AppBaseModel):
     """Model for page dimensions."""
     
     width: int = Field(..., description="Page width in pixels", gt=0)
@@ -63,7 +67,7 @@ class PageDimensions(BaseModel):
         }
 
 
-class LayoutDetectionOptions(BaseModel):
+class LayoutDetectionOptions(AppBaseModel):
     """Options for layout detection."""
     
     min_confidence: Optional[float] = Field(
@@ -96,7 +100,7 @@ class LayoutDetectionOptions(BaseModel):
         }
 
 
-class DetectLayoutRequest(BaseModel):
+class DetectLayoutRequest(AppBaseModel):
     """Request model for layout detection endpoint."""
     
     image: str = Field(..., description="Base64-encoded image data")
@@ -137,7 +141,7 @@ class DetectLayoutRequest(BaseModel):
         }
 
 
-class DetectLayoutResponse(BaseModel):
+class DetectLayoutResponse(AppBaseModel):
     """Response model for layout detection endpoint."""
     
     regions: List[Region] = Field(..., description="List of detected regions")
@@ -178,7 +182,7 @@ class DetectLayoutResponse(BaseModel):
         }
 
 
-class HealthResponse(BaseModel):
+class HealthResponse(AppBaseModel):
     """Response model for health check endpoint."""
     
     status: str = Field(..., description="Service status (healthy, unhealthy, degraded)")
@@ -208,7 +212,7 @@ class HealthResponse(BaseModel):
         }
 
 
-class ErrorResponse(BaseModel):
+class ErrorResponse(AppBaseModel):
     """Response model for error responses."""
     
     error: str = Field(..., description="Error type or code")

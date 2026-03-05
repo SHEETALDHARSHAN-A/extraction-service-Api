@@ -8,7 +8,7 @@ pydantic-settings==2.1.0
 
 # ML dependencies
 torch==2.1.0
-transformers==4.35.0
+transformers @ git+https://github.com/huggingface/transformers.git
 pillow==10.1.0
 
 # Utilities

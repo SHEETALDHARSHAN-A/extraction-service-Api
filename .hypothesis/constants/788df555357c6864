@@ -1,0 +1,4 @@
+# file: C:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\glm-ocr-service\app\error_logger.py
+# hypothesis_version: 6.151.9
+
+[100, '...', 'ERROR', 'GPU_MEMORY_ERROR', 'INFERENCE_ERROR', 'VALIDATION_ERROR', 'allocated_gb', 'batch_size', 'context', 'document_size_mb', 'error_class', 'error_message', 'error_type', 'free_gb', 'glm-ocr-service', 'gpu_memory_free_gb', 'gpu_memory_total_gb', 'level', 'max_tokens', 'output_format', 'processing_time_ms', 'prompt_preview', 'request_id', 'reserved_gb', 'retry_attempt', 'service', 'stack_trace', 'timestamp', 'total_gb', 'unknown', 'validation_details', 'validation_type']

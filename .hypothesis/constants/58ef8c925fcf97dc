@@ -1,0 +1,4 @@
+# file: C:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\glm-ocr-service\app\validators.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.1, 0.2, 0.5, 0.95, 1.0, 'BBOX_EXCEEDS_PAGE', 'BBOX_OUTSIDE_PAGE', 'INVALID_BBOX_FORMAT', 'LOW_CONFIDENCE', 'ORPHANED_VALUE', 'WORD_BOXES_OVERLAP', 'bbox', 'bbox_bottom', 'bbox_right', 'bounding_boxes', 'code', 'confidence', 'content', 'details', 'element', 'heading', 'height', 'high', 'index', 'invalid_elements', 'key', 'key_bbox', 'key_value_pairs', 'level', 'low', 'low_confidence_count', 'medium', 'message', 'original_length', 'overlap_count', 'page_bbox', 'page_bottom', 'page_right', 'page_x', 'page_y', 'ratio', 'reconstructed_length', 'sections', 'severity', 'similarity_score', 'stats', 'structured_output', 'text', 'total_elements', 'type', 'valid', 'value', 'value_bbox', 'warnings', 'width', 'word', 'word_boxes', 'x', 'y']

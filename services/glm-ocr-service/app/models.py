@@ -1,10 +1,14 @@
 """Pydantic models for GLM-OCR service API."""
 
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, ConfigDict
 
 
-class ExtractionOptions(BaseModel):
+class AppBaseModel(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+
+class ExtractionOptions(AppBaseModel):
     """Options for extraction granularity and output format."""
     
     granularity: str = Field(
@@ -23,6 +27,10 @@ class ExtractionOptions(BaseModel):
         default=True,
         description="Include confidence scores in output"
     )
+    fast_mode: bool = Field(
+        default=False,
+        description="Enable low-latency extraction mode with lightweight post-processing"
+    )
     
     @validator("granularity")
     def validate_granularity(cls, v):
@@ -39,7 +47,7 @@ class ExtractionOptions(BaseModel):
         return v.lower()
 
 
-class RegionExtractionRequest(BaseModel):
+class RegionExtractionRequest(AppBaseModel):
     """Request model for single region extraction."""
     
     image: str = Field(..., description="Base64 encoded cropped region image")
@@ -61,14 +69,14 @@ class RegionExtractionRequest(BaseModel):
         return v
 
 
-class TokenUsage(BaseModel):
+class TokenUsage(AppBaseModel):
     """Token usage information."""
     
     prompt: int = Field(0, description="Number of prompt tokens")
     completion: int = Field(0, description="Number of completion tokens")
 
 
-class WordBoundingBox(BaseModel):
+class WordBoundingBox(AppBaseModel):
     """Word-level bounding box."""
     
     word: str = Field(..., description="Word text")
@@ -76,7 +84,7 @@ class WordBoundingBox(BaseModel):
     confidence: float = Field(..., description="Confidence score")
 
 
-class KeyValuePair(BaseModel):
+class KeyValuePair(AppBaseModel):
     """Key-value pair with bounding boxes."""
     
     key: str = Field(..., description="Key text")
@@ -86,7 +94,7 @@ class KeyValuePair(BaseModel):
     confidence: float = Field(..., description="Confidence score")
 
 
-class RegionExtractionResponse(BaseModel):
+class RegionExtractionResponse(AppBaseModel):
     """Response model for single region extraction."""
     
     content: str = Field(..., description="Extracted content")
@@ -100,7 +108,7 @@ class RegionExtractionResponse(BaseModel):
     validation_warnings: Optional[List[Dict[str, Any]]] = Field(None, description="Validation warnings for extraction results")
 
 
-class BatchRegionRequest(BaseModel):
+class BatchRegionRequest(AppBaseModel):
     """Single region in a batch request."""
     
     region_id: str = Field(..., description="Unique identifier for this region")
@@ -116,7 +124,7 @@ class BatchRegionRequest(BaseModel):
         return v.lower()
 
 
-class BatchRegionExtractionRequest(BaseModel):
+class BatchRegionExtractionRequest(AppBaseModel):
     """Request model for batch region extraction."""
     
     regions: List[BatchRegionRequest] = Field(..., description="List of regions to process")
@@ -131,7 +139,7 @@ class BatchRegionExtractionRequest(BaseModel):
         return v
 
 
-class BatchRegionResult(BaseModel):
+class BatchRegionResult(AppBaseModel):
     """Result for a single region in batch processing."""
     
     region_id: str = Field(..., description="Region identifier")
@@ -140,7 +148,7 @@ class BatchRegionResult(BaseModel):
     error: Optional[str] = Field(None, description="Error message if processing failed")
 
 
-class BatchRegionExtractionResponse(BaseModel):
+class BatchRegionExtractionResponse(AppBaseModel):
     """Response model for batch region extraction."""
     
     results: List[BatchRegionResult] = Field(..., description="Results for each region")
@@ -149,7 +157,7 @@ class BatchRegionExtractionResponse(BaseModel):
     gpu_memory_used_gb: Optional[float] = Field(None, description="GPU memory used in GB")
 
 
-class HealthResponse(BaseModel):
+class HealthResponse(AppBaseModel):
     """Health check response."""
     
     status: str = Field(..., description="Service status: healthy, degraded, unhealthy")
@@ -162,7 +170,7 @@ class HealthResponse(BaseModel):
     gpu_memory_stats: Optional[Dict[str, float]] = Field(None, description="GPU memory statistics")
 
 
-class ErrorResponse(BaseModel):
+class ErrorResponse(AppBaseModel):
     """Error response model."""
     
     error: str = Field(..., description="Error message")

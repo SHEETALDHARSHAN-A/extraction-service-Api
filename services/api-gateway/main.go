@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/user/idep/api-gateway/cache"
@@ -32,7 +33,7 @@ import (
 
 var (
 	db              *gorm.DB
-	minioStore      *storage.MinioClient
+	storageClient   storage.StorageClient
 	temporalClient  client.Client
 	redisCache      *cache.RedisCache
 	requestQueue    queue.RequestQueue
@@ -60,25 +61,39 @@ func main() {
 	}
 	_ = tracer // Tracer is set globally
 
-	// --- Initialize PostgreSQL ---
-	db, err = gorm.Open(postgres.Open(cfg.DatabaseURL), &gorm.Config{})
+	// --- Initialize Database ---
+	switch strings.ToLower(cfg.DatabaseDriver) {
+	case "sqlite":
+		db, err = gorm.Open(sqlite.Open(cfg.DatabaseURL), &gorm.Config{})
+	default:
+		db, err = gorm.Open(postgres.Open(cfg.DatabaseURL), &gorm.Config{})
+	}
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	if err := db.AutoMigrate(&models.Job{}); err != nil {
 		log.Fatalf("Failed to auto-migrate: %v", err)
 	}
-	log.Println("✅ PostgreSQL connected and migrated")
+	log.Printf("✅ Database connected and migrated (driver=%s)", cfg.DatabaseDriver)
 
-	// --- Initialize MinIO ---
-	minioStore, err = storage.NewMinioClient(
-		cfg.MinioEndpoint, cfg.MinioAccessKey, cfg.MinioSecretKey,
-		cfg.MinioBucket, cfg.MinioUseSSL,
-	)
-	if err != nil {
-		log.Fatalf("Failed to connect to MinIO: %v", err)
+	// --- Initialize Storage Backend ---
+	switch strings.ToLower(cfg.StorageDriver) {
+	case "local":
+		storageClient, err = storage.NewLocalStorageClient(cfg.LocalStorageRoot, cfg.MinioBucket)
+		if err != nil {
+			log.Fatalf("Failed to initialize local storage: %v", err)
+		}
+		log.Println("✅ Local filesystem storage connected")
+	default:
+		storageClient, err = storage.NewMinioClient(
+			cfg.MinioEndpoint, cfg.MinioAccessKey, cfg.MinioSecretKey,
+			cfg.MinioBucket, cfg.MinioUseSSL,
+		)
+		if err != nil {
+			log.Fatalf("Failed to connect to MinIO: %v", err)
+		}
+		log.Println("✅ MinIO connected")
 	}
-	log.Println("✅ MinIO connected")
 
 	// --- Initialize Temporal Client ---
 	temporalClient, err = client.Dial(client.Options{
@@ -86,10 +101,12 @@ func main() {
 		Namespace: cfg.TemporalNamespace,
 	})
 	if err != nil {
-		log.Fatalf("Failed to connect to Temporal: %v", err)
+		log.Printf("⚠️ Failed to connect to Temporal (non-fatal): %v", err)
+		log.Println("   Workflows will not start. Install Temporal CLI and run: temporal server start-dev")
+	} else {
+		defer temporalClient.Close()
+		log.Println("✅ Temporal connected")
 	}
-	defer temporalClient.Close()
-	log.Println("✅ Temporal connected")
 
 	// --- Initialize Redis Cache ---
 	redisCache, err = cache.New(cfg.RedisURL)
@@ -98,35 +115,42 @@ func main() {
 	}
 
 	// --- Initialize Redis Request Queue ---
-	redisClient := redis.NewClient(&redis.Options{
-		Addr: cfg.RedisURL,
-	})
-	requestQueue = queue.NewRedisQueue(redisClient)
-	log.Println("✅ Redis request queue initialized")
+	redisOpts, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		redisOpts = &redis.Options{Addr: cfg.RedisURL, DB: 0}
+	}
+	redisClient := redis.NewClient(redisOpts)
+	if _, pingErr := redisClient.Ping(context.Background()).Result(); pingErr != nil {
+		log.Printf("⚠️ Redis queue unavailable (non-fatal): %v", pingErr)
+	} else {
+		requestQueue = queue.NewRedisQueue(redisClient)
+		log.Println("✅ Redis request queue initialized")
+	}
 
-	// Start queue metrics emission goroutine
-	go func() {
-		ticker := time.NewTicker(30 * time.Second) // Emit metrics every 30 seconds
-		defer ticker.Stop()
+	// Start queue metrics emission goroutine only if queue is initialized
+	if requestQueue != nil {
+		go func() {
+			ticker := time.NewTicker(30 * time.Second) // Emit metrics every 30 seconds
+			defer ticker.Stop()
 
-		for range ticker.C {
-			metrics, err := requestQueue.UpdateQueueMetrics(context.Background())
-			if err != nil {
-				log.Printf("⚠️ Failed to update queue metrics: %v", err)
-				continue
+			for range ticker.C {
+				metrics, err := requestQueue.UpdateQueueMetrics(context.Background())
+				if err != nil {
+					log.Printf("⚠️ Failed to update queue metrics: %v", err)
+					continue
+				}
+
+				// Log queue metrics with structured logging
+				log.Printf(`{"timestamp":"%s","level":"INFO","service":"idep-api-gateway","message":"Queue metrics","context":{"queue_length":%d,"processing_count":%d,"avg_wait_time_seconds":%.2f,"avg_processing_time_seconds":%.2f,"throughput_per_hour":%.2f}}`,
+					metrics.Timestamp,
+					metrics.QueueLength,
+					metrics.ProcessingCount,
+					metrics.AvgWaitTimeSeconds,
+					metrics.AvgProcessingTime,
+				)
 			}
-
-			// Log queue metrics with structured logging
-			log.Printf(`{"timestamp":"%s","level":"INFO","service":"idep-api-gateway","message":"Queue metrics","context":{"queue_length":%d,"processing_count":%d,"avg_wait_time_seconds":%.2f,"avg_processing_time_seconds":%.2f,"throughput_per_hour":%.2f}}`,
-				metrics.Timestamp,
-				metrics.QueueLength,
-				metrics.ProcessingCount,
-				metrics.AvgWaitTimeSeconds,
-				metrics.AvgProcessingTime,
-				metrics.ThroughputPerHour,
-			)
-		}
-	}()
+		}()
+	}
 
 	// --- Initialize Service Clients ---
 	paddleOCRClient = clients.NewPaddleOCRClient(
@@ -200,7 +224,7 @@ func main() {
 func batchHandler() *handlers.BatchUploadHandler {
 	return &handlers.BatchUploadHandler{
 		DB:             db,
-		MinioStore:     minioStore,
+		MinioStore:     storageClient,
 		TemporalClient: temporalClient,
 		TaskQueue:      cfg.TemporalTaskQueue,
 	}
@@ -397,7 +421,7 @@ func uploadDocument(c *gin.Context) {
 
 	// Upload from buffer (already read for hashing)
 	reader := io.NopCloser(&buf)
-	storagePath, err := minioStore.UploadFile(
+	storagePath, err := storageClient.UploadFile(
 		context.Background(), objectName, reader, header.Size,
 		header.Header.Get("Content-Type"),
 	)
@@ -416,6 +440,7 @@ func uploadDocument(c *gin.Context) {
 	outputFormats := c.DefaultPostForm("output_formats", "text")
 	customPrompt := c.DefaultPostForm("prompt", "")
 	includeCoordinates := c.DefaultPostForm("include_coordinates", "false") == "true"
+	fastMode := c.DefaultPostForm("fast_mode", "false") == "true"
 	includeWordConfidence := c.DefaultPostForm("include_word_confidence", "false") == "true"
 	includeLineConfidence := c.DefaultPostForm("include_line_confidence", "false") == "true"
 	includePageLayout := c.DefaultPostForm("include_page_layout", "false") == "true"
@@ -491,6 +516,7 @@ func uploadDocument(c *gin.Context) {
 		DocumentSize: header.Size,
 		Options: map[string]interface{}{
 			"prompt":                     customPrompt,
+			"fast_mode":                  fastMode,
 			"include_coordinates":        includeCoordinates,
 			"include_word_confidence":    includeWordConfidence,
 			"include_line_confidence":    includeLineConfidence,
@@ -517,28 +543,33 @@ func uploadDocument(c *gin.Context) {
 		},
 	}
 
-	if err := requestQueue.Enqueue(c.Request.Context(), queuedJob); err != nil {
-		// Queue is full - return HTTP 429 with retry-after header
-		estimatedWait, _ := requestQueue.GetEstimatedWaitTime(c.Request.Context())
-		retryAfterSeconds := int(estimatedWait.Seconds())
-		if retryAfterSeconds < 60 {
-			retryAfterSeconds = 60 // Minimum 1 minute retry
+	var queueLength int64
+	var estimatedWait time.Duration
+
+	if requestQueue != nil {
+		if err := requestQueue.Enqueue(c.Request.Context(), queuedJob); err != nil {
+			// Queue is full - return HTTP 429 with retry-after header
+			estimatedWait, _ = requestQueue.GetEstimatedWaitTime(c.Request.Context())
+			retryAfterSeconds := int(estimatedWait.Seconds())
+			if retryAfterSeconds < 60 {
+				retryAfterSeconds = 60 // Minimum 1 minute retry
+			}
+
+			c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSeconds))
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":                       "Queue is full, please retry later",
+				"retry_after_seconds":         retryAfterSeconds,
+				"estimated_wait_time_seconds": int(estimatedWait.Seconds()),
+			})
+
+			// Clean up the job record since we couldn't enqueue
+			db.Delete(&job)
+			return
 		}
 
-		c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSeconds))
-		c.JSON(http.StatusTooManyRequests, gin.H{
-			"error":                       "Queue is full, please retry later",
-			"retry_after_seconds":         retryAfterSeconds,
-			"estimated_wait_time_seconds": int(estimatedWait.Seconds()),
-		})
-
-		// Clean up the job record since we couldn't enqueue
-		db.Delete(&job)
-		return
+		queueLength, _ = requestQueue.GetQueueLength(c.Request.Context())
+		estimatedWait, _ = requestQueue.GetEstimatedWaitTime(c.Request.Context())
 	}
-
-	queueLength, _ := requestQueue.GetQueueLength(c.Request.Context())
-	estimatedWait, _ := requestQueue.GetEstimatedWaitTime(c.Request.Context())
 
 	workflowOptions := client.StartWorkflowOptions{
 		ID:        fmt.Sprintf("doc-processing-%s", jobID),
@@ -553,6 +584,7 @@ func uploadDocument(c *gin.Context) {
 		"output_formats": outputFormats,
 		"options": map[string]interface{}{
 			"prompt":                     customPrompt,
+			"fast_mode":                  fastMode,
 			"include_coordinates":        includeCoordinates,
 			"include_word_confidence":    includeWordConfidence,
 			"include_line_confidence":    includeLineConfidence,
@@ -577,6 +609,21 @@ func uploadDocument(c *gin.Context) {
 				"cache_layout_results": cacheLayoutResults,
 			},
 		},
+	}
+
+	if temporalClient == nil {
+		log.Printf("⚠️ Temporal not connected — cannot start workflow for job %s", jobID)
+		db.Model(&job).Updates(map[string]interface{}{
+			"status":        models.StatusFailed,
+			"error_message": "Temporal server is not available. Please start Temporal and retry.",
+		})
+		middleware.RecordJobFailed()
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":   "Workflow engine (Temporal) is not available",
+			"job_id":  jobID,
+			"message": "Document uploaded but cannot be processed. Start Temporal and retry.",
+		})
+		return
 	}
 
 	we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, "DocumentProcessingWorkflow", workflowInput)
@@ -612,6 +659,7 @@ func uploadDocument(c *gin.Context) {
 		"estimated_wait_time_seconds": int(estimatedWait.Seconds()),
 		"options": gin.H{
 			"prompt":                     customPrompt,
+			"fast_mode":                  fastMode,
 			"include_coordinates":        includeCoordinates,
 			"include_word_confidence":    includeWordConfidence,
 			"include_line_confidence":    includeLineConfidence,
@@ -669,7 +717,7 @@ func getJobResult(c *gin.Context) {
 		return
 	}
 
-	reader, err := minioStore.DownloadFile(context.Background(), job.ResultPath)
+	reader, err := storageClient.DownloadFile(context.Background(), job.ResultPath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve result"})
 		return

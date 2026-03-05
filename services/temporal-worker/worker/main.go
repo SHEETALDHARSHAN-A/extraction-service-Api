@@ -51,6 +51,8 @@ func main() {
 		MinioAccessKey:     cfg.MinioAccessKey,
 		MinioSecretKey:     cfg.MinioSecretKey,
 		MinioBucket:        cfg.MinioBucket,
+		StorageDriver:      cfg.StorageDriver,
+		LocalStorageRoot:   cfg.LocalStorageRoot,
 	}
 	w.RegisterActivity(activities)
 

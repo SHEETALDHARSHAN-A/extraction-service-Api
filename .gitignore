@@ -1,1 +1,52 @@
-.venv311/
+# Environments
+.env
+.venv*
+venv/
+ENV/
+
+# Logs and databases
+*.log
+logs/
+*.sqlite
+*.sqlite3
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.class
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Go
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Node / JS
+node_modules/
+
+# Output & Result dirs
+test_results/
+demo_results/
+
+# OS/IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+
+.local/
+*.out
+*.exe
+test_simple*.png
+upload_response*.json
+workflow*.json
+workflow*.txt
+

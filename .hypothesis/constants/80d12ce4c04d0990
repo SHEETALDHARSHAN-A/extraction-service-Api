@@ -1,0 +1,4 @@
+# file: C:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\glm-ocr-service\app\config.py
+# hypothesis_version: 6.151.9
+
+[2048, 8002, 8192, '%Y-%m-%dT%H:%M:%S', '.env', '0.0.0.0', '1.0.0', 'CUDA_VISIBLE_DEVICES', 'GLM_MODEL_PATH', 'GLM_PRECISION_MODE', 'INFO', 'LOG_LEVEL', 'TRITON_MODEL_DIR', 'USE_TRITON_BACKEND', 'false', 'glm-ocr-service', 'ignore', 'normal', 'true', 'zai-org/GLM-OCR']

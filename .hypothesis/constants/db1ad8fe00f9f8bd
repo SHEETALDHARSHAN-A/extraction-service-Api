@@ -1,0 +1,4 @@
+# file: C:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\glm-ocr-service\app\models.py
+# hypothesis_version: 6.151.9
+
+['Confidence score', 'Error message', 'Extracted content', 'Key text', 'Processing options', 'Region identifier', 'Service name', 'Service version', 'Total token usage', 'Type of region', 'Value text', 'Word text', 'block', 'caption', 'figure', 'footer', 'formula', 'granularity', 'header', 'image', 'json', 'key_value', 'line', 'markdown', 'output_format', 'region_type', 'regions', 'structured', 'table', 'text', 'title', 'word']

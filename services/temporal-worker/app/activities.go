@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +36,8 @@ type Activities struct {
 	MinioAccessKey     string
 	MinioSecretKey     string
 	MinioBucket        string
+	StorageDriver      string // "minio" (default) or "local"
+	LocalStorageRoot   string // root dir for local storage
 }
 
 // ─── Data Transfer Objects ───
@@ -43,6 +46,7 @@ type Activities struct {
 type ExtractionOptions struct {
 	OutputFormats         string `json:"output_formats"`
 	Prompt                string `json:"prompt"`
+	FastMode              bool   `json:"fast_mode"`
 	IncludeCoordinates    bool   `json:"include_coordinates"`
 	IncludeWordConfidence bool   `json:"include_word_confidence"`
 	IncludeLineConfidence bool   `json:"include_line_confidence"`
@@ -111,6 +115,9 @@ func parseOptions(input map[string]interface{}) ExtractionOptions {
 	if optMap, ok := input["options"].(map[string]interface{}); ok {
 		if v, ok := optMap["prompt"].(string); ok {
 			opts.Prompt = v
+		}
+		if v, ok := optMap["fast_mode"].(bool); ok {
+			opts.FastMode = v
 		}
 		if v, ok := optMap["include_coordinates"].(bool); ok {
 			opts.IncludeCoordinates = v
@@ -231,6 +238,19 @@ func (a *Activities) Preprocess(ctx context.Context, input map[string]interface{
 }
 
 func (a *Activities) downloadSourceFromMinIO(ctx context.Context, storagePath, jobID string) (string, error) {
+	// ── Local storage mode ─────────────────────────────────────────────────
+	if strings.EqualFold(a.StorageDriver, "local") {
+		objectPath := strings.TrimPrefix(storagePath, a.MinioBucket+"/")
+		objectPath = strings.TrimPrefix(objectPath, "/")
+		localPath := filepath.Join(a.LocalStorageRoot, a.MinioBucket, filepath.FromSlash(objectPath))
+		if _, err := os.Stat(localPath); err != nil {
+			return "", fmt.Errorf("local file not found at %s: %w", localPath, err)
+		}
+		log.Printf("📁 [Local] Source file: %s", localPath)
+		return localPath, nil
+	}
+
+	// ── MinIO mode (default) ────────────────────────────────────────────
 	minioClient, err := minio.New(a.MinioEndpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(a.MinioAccessKey, a.MinioSecretKey, ""),
 		Secure: false,
@@ -291,10 +311,7 @@ type PageProcessingOutput struct {
 func (a *Activities) ProcessSinglePage(ctx context.Context, input *PageProcessingInput) (*PageProcessingOutput, error) {
 	log.Printf("🧠 [ProcessSinglePage] job=%s page=%d", input.JobID, input.PageNumber)
 
-	imgPath := input.ImagePath
-	if !filepath.IsAbs(imgPath) {
-		imgPath = filepath.Join("/tmp/idep", imgPath)
-	}
+	imgPath := resolveLocalImagePath(input.ImagePath)
 
 	pageJSON, pageConf, err := a.callTritonHTTP(ctx, imgPath, input.Prompt, input.OptionsJSON, input.PrecisionMode)
 	if err != nil {
@@ -358,14 +375,15 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 
 	// Build options JSON for Triton — controls output structure inside the Python backend
 	optionsJSON, _ := json.Marshal(map[string]interface{}{
+		"fast_mode":               input.Options.FastMode,
 		"include_coordinates":     input.Options.IncludeCoordinates,
 		"include_word_confidence": input.Options.IncludeWordConfidence,
 		"include_line_confidence": input.Options.IncludeLineConfidence,
 		"include_page_layout":     input.Options.IncludePageLayout,
 		"language":                input.Options.Language,
 		"granularity":             input.Options.Granularity,
-		"temperature":             input.Options.Temperature,
-		"max_tokens":              input.Options.MaxTokens,
+		"temperature":             parseFloatOrDefault(input.Options.Temperature, 0.0),
+		"max_tokens":              parseIntOrDefault(input.Options.MaxTokens, 4096),
 		"output_format":           strings.TrimSpace(strings.Split(input.Options.OutputFormats, ",")[0]),
 		"extract_fields":          input.Options.ExtractFields,
 	})
@@ -374,19 +392,18 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 
 	// ── Per-page inference ──────────────────────────────────────────────────
 	type pageEntry struct {
-		Page   int             `json:"page"`
-		Result json.RawMessage `json:"result"`
+		Page   int         `json:"page"`
+		Result interface{} `json:"result"`
 	}
 	var pageEntries []pageEntry
 	var markdownParts []string
 	var totalConfidence float64
+	successCount := 0
 
 	start := time.Now()
 
 	for i, imgPath := range input.ImagePaths {
-		if !filepath.IsAbs(imgPath) {
-			imgPath = filepath.Join("/tmp/idep", imgPath)
-		}
+		imgPath = resolveLocalImagePath(imgPath)
 		pageJSON, pageConf, err := a.callTritonHTTP(ctx, imgPath, prompt, string(optionsJSON), input.Options.PrecisionMode)
 		if err != nil {
 			return nil, fmt.Errorf("triton inference failed for page %d (%s): %w", i+1, imgPath, err)
@@ -403,12 +420,20 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 			}
 		}
 
-		pageEntries = append(pageEntries, pageEntry{Page: i + 1, Result: json.RawMessage(pageJSON)})
+		var parsedResult interface{}
+		if json.Unmarshal([]byte(pageJSON), &parsedResult) != nil {
+			parsedResult = pageJSON
+		}
+		pageEntries = append(pageEntries, pageEntry{Page: i + 1, Result: parsedResult})
 		totalConfidence += pageConf
+		successCount++
 	}
 
 	extractionTime := time.Since(start).Seconds()
-	avgConfidence := totalConfidence / float64(len(input.ImagePaths))
+	avgConfidence := 0.0
+	if successCount > 0 {
+		avgConfidence = totalConfidence / float64(successCount)
+	}
 
 	// ── Aggregate pages into canonical output ───────────────────────────────
 	aggregated := map[string]interface{}{
@@ -432,6 +457,43 @@ func (a *Activities) CallTriton(ctx context.Context, input *PreprocessOutput) (*
 		ExtractionTime: extractionTime,
 		Options:        input.Options,
 	}, nil
+}
+
+// resolveLocalImagePath normalizes page paths produced by preprocessing or MinIO staging.
+// On Windows, paths like "\\tmp\\idep\\..." are rooted but filepath.IsAbs may not always
+// classify incoming variants consistently, so we treat rooted tmp paths as already resolved.
+func resolveLocalImagePath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return path
+	}
+
+	cleaned := filepath.Clean(filepath.FromSlash(path))
+	if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, string(os.PathSeparator)) {
+		return cleaned
+	}
+
+	trimmed := strings.TrimLeft(cleaned, `/\\`)
+	tmpRoot := filepath.Join("tmp", "idep")
+	tmpRootPrefix := tmpRoot + string(os.PathSeparator)
+	if strings.HasPrefix(strings.ToLower(trimmed), strings.ToLower(tmpRootPrefix)) || strings.EqualFold(trimmed, tmpRoot) {
+		return string(os.PathSeparator) + trimmed
+	}
+
+	return filepath.Join("/tmp/idep", cleaned)
+}
+
+func parseIntOrDefault(raw string, fallback int) int {
+	if v, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil {
+		return v
+	}
+	return fallback
+}
+
+func parseFloatOrDefault(raw string, fallback float64) float64 {
+	if v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64); err == nil {
+		return v
+	}
+	return fallback
 }
 
 // stringToUint8Tensor encodes a Go string as a UINT8 tensor for Triton.
@@ -849,6 +911,20 @@ func (a *Activities) PostProcess(ctx context.Context, input *ExtractionOutput) (
 }
 
 func (a *Activities) uploadResultToMinIO(ctx context.Context, objectPath string, content []byte) error {
+	// ── Local storage mode ─────────────────────────────────────────────────
+	if strings.EqualFold(a.StorageDriver, "local") {
+		fullPath := filepath.Join(a.LocalStorageRoot, a.MinioBucket, filepath.FromSlash(objectPath))
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			return fmt.Errorf("failed to create result directory: %w", err)
+		}
+		if err := os.WriteFile(fullPath, content, 0o644); err != nil {
+			return fmt.Errorf("failed to write result file: %w", err)
+		}
+		log.Printf("📁 [Local] Result saved: %s", fullPath)
+		return nil
+	}
+
+	// ── MinIO mode (default) ────────────────────────────────────────────
 	endpoint := strings.TrimPrefix(strings.TrimPrefix(a.MinioEndpoint, "http://"), "https://")
 	useSSL := strings.HasPrefix(a.MinioEndpoint, "https://")
 

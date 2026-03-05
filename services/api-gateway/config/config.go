@@ -7,8 +7,11 @@ import (
 
 type Config struct {
 	Port                    string
+	DatabaseDriver          string
 	DatabaseURL             string
 	RedisURL                string
+	StorageDriver           string // "minio" (default) or "local"
+	LocalStorageRoot        string // root dir for local storage (default: .local/data/storage)
 	MinioEndpoint           string
 	MinioAccessKey          string
 	MinioSecretKey          string
@@ -32,8 +35,11 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		Port:                    getEnv("API_PORT", "8000"),
+		DatabaseDriver:          getEnv("DATABASE_DRIVER", "postgres"),
 		DatabaseURL:             getEnv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/idep"),
-		RedisURL:                getEnv("REDIS_URL", "redis://redis:6379/0"),
+		RedisURL:                getEnv("REDIS_URL", "redis://localhost:6379/0"),
+		StorageDriver:           getEnv("STORAGE_DRIVER", "minio"),
+		LocalStorageRoot:        getEnv("LOCAL_STORAGE_ROOT", ".local/data/storage"),
 		MinioEndpoint:           getEnv("MINIO_ENDPOINT", "localhost:9000"),
 		MinioAccessKey:          getEnv("MINIO_ACCESS_KEY", "minioadmin"),
 		MinioSecretKey:          getEnv("MINIO_SECRET_KEY", "minioadmin"),

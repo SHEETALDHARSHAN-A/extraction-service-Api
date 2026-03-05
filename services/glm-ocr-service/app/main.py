@@ -6,8 +6,11 @@ import logging.config
 import uuid
 import json
 import os
+import base64
+import io
 from contextlib import asynccontextmanager
 from typing import Dict, Any
+from PIL import Image
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
@@ -101,6 +104,38 @@ logging_config = {
 
 logging.config.dictConfig(logging_config)
 logger = logging.getLogger(__name__)
+
+
+def infer_page_bbox(image_base64: str) -> list[int]:
+    """Infer page bbox [x, y, w, h] from base64 image payload."""
+    try:
+        payload = image_base64.split(",", 1)[1] if image_base64.startswith("data:") else image_base64
+        image_bytes = base64.b64decode(payload)
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        return [0, 0, int(image.width), int(image.height)]
+    except Exception:
+        return [0, 0, 1000, 1000]
+
+
+def build_line_bounding_boxes(content: str, page_bbox: list[int], confidence: float) -> list[dict[str, Any]]:
+    """Build lightweight approximate line-level bboxes from content for fast mode."""
+    x, y, width, height = page_bbox
+    lines = [line.strip() for line in (content or "").splitlines() if line.strip()]
+    if not lines:
+        lines = [(content or "").strip()] if (content or "").strip() else []
+    if not lines:
+        return []
+
+    line_h = max(1, height // max(1, len(lines)))
+    boxes = []
+    for i, line in enumerate(lines):
+        boxes.append({
+            "text": line,
+            "bbox": [x, y + i * line_h, width, min(line_h, height - i * line_h)],
+            "confidence": confidence,
+            "type": "line"
+        })
+    return boxes
 
 
 def log_extraction_request(request_id: str, status: str, document_size: int = None, 
@@ -587,15 +622,19 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
     
     # Check GPU memory availability
     if gpu_monitor and gpu_monitor.gpu_available:
-        if not gpu_monitor.has_sufficient_memory(required_gb=2.0):
+        required_gb = 2.0
+        if settings.low_vram_mode:
+            required_gb = 1.2
+
+        if not gpu_monitor.has_sufficient_memory(required_gb=required_gb):
             stats = gpu_monitor.get_memory_stats()
             logger.warning(
                 f"Insufficient GPU memory: {stats.get('free_gb', 0):.2f}GB available, "
-                f"2.0GB required [request_id={request_id}]"
+                f"{required_gb:.1f}GB required [request_id={request_id}]"
             )
             raise HTTPException(
                 status_code=503,
-                detail=f"Insufficient GPU memory. Available: {stats.get('free_gb', 0):.2f}GB, Required: 2.0GB",
+                detail=f"Insufficient GPU memory. Available: {stats.get('free_gb', 0):.2f}GB, Required: {required_gb:.1f}GB",
                 headers={"Retry-After": "60"}
             )
         
@@ -613,8 +652,10 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
         
         # Get options
         options = request.options or {}
-        max_tokens = options.get("max_tokens", settings.max_tokens_default)
-        max_tokens = min(max_tokens, settings.max_tokens_limit)
+        max_tokens = int(options.get("max_tokens", settings.max_tokens_default))
+        max_tokens = min(max_tokens, int(settings.max_tokens_limit))
+        if settings.low_vram_mode and gpu_monitor and gpu_monitor.gpu_available:
+            max_tokens = min(max_tokens, int(settings.low_vram_max_tokens))
         output_format = options.get("output_format", "text")
         
         # Parse extraction options
@@ -622,8 +663,19 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
             granularity=options.get("granularity", "block"),
             output_format=output_format,
             include_coordinates=options.get("include_coordinates", True),
-            include_confidence=options.get("include_confidence", True)
+            include_confidence=options.get("include_confidence", True),
+            fast_mode=options.get("fast_mode", False)
         )
+
+        if extraction_opts.fast_mode:
+            max_tokens = min(max_tokens, 512)
+            logger.info(f"Fast mode enabled: max_tokens={max_tokens} [request_id={request_id}]")
+
+        if settings.low_vram_mode and gpu_monitor and gpu_monitor.gpu_available:
+            logger.info(
+                f"Low-VRAM mode active: max_tokens={max_tokens}, "
+                f"max_image_edge={settings.low_vram_max_image_edge} [request_id={request_id}]"
+            )
         
         logger.info(f"Extracting region: type={request.region_type}, prompt={prompt[:50]}... [request_id={request_id}]")
         
@@ -686,11 +738,21 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
         word_boxes = None
         key_value_pairs = None
         bounding_boxes = None
-        
-        # Assume page bbox for now (would come from actual OCR in production)
-        page_bbox = [0, 0, 1000, 1000]
-        
-        if extraction_opts.granularity == "word" and word_extractor:
+
+        page_bbox = infer_page_bbox(request.image)
+
+        if extraction_opts.include_coordinates:
+            if extraction_opts.fast_mode:
+                bounding_boxes = build_line_bounding_boxes(content, page_bbox, confidence)
+            else:
+                bounding_boxes = [{
+                    "text": content,
+                    "bbox": page_bbox,
+                    "confidence": confidence if extraction_opts.include_confidence else 1.0,
+                    "type": request.region_type,
+                }]
+
+        if (not extraction_opts.fast_mode) and extraction_opts.granularity == "word" and word_extractor:
             words = word_extractor.extract_words(content, page_bbox, confidence)
             words = word_extractor.handle_hyphenated_words(words)
             words = word_extractor.sort_words_reading_order(words)
@@ -705,7 +767,7 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
                     for w in words
                 ]
         
-        if extraction_opts.output_format == "key_value" and kv_extractor:
+        if (not extraction_opts.fast_mode) and extraction_opts.output_format == "key_value" and kv_extractor:
             pairs = kv_extractor.extract_key_values(content, page_bbox)
             pairs = kv_extractor.handle_multi_value_keys(pairs)
             
@@ -729,7 +791,7 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
         
         # Validate extraction results
         validation_warnings = None
-        if validator:
+        if validator and not extraction_opts.fast_mode:
             # Prepare result dict for validation
             result_dict = {
                 'word_boxes': word_boxes,
@@ -930,8 +992,10 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
     
     # Get options
     options = request.options or {}
-    max_tokens = options.get("max_tokens", settings.max_tokens_default)
-    max_tokens = min(max_tokens, settings.max_tokens_limit)
+    max_tokens = int(options.get("max_tokens", settings.max_tokens_default))
+    max_tokens = min(max_tokens, int(settings.max_tokens_limit))
+    if settings.low_vram_mode and gpu_monitor and gpu_monitor.gpu_available:
+        max_tokens = min(max_tokens, int(settings.low_vram_max_tokens))
     output_format = options.get("output_format", "text")
     
     # Process each region

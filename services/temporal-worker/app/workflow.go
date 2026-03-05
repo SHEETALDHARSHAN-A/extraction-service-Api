@@ -23,9 +23,6 @@ func DocumentProcessingWorkflow(ctx workflow.Context, input map[string]interface
 	jobID := input["job_id"].(string)
 	workflowStartTime := workflow.Now(ctx)
 
-	// Configure workflow-level timeout (30 minutes)
-	ctx = workflow.WithWorkflowTimeout(ctx, 30*time.Minute)
-
 	// Track partial results for timeout handling
 	var partialPageResults []*PageProcessingOutput
 	var preprocessOutput PreprocessOutput
@@ -169,7 +166,7 @@ func DocumentProcessingWorkflow(ctx workflow.Context, input map[string]interface
 		logger.Error("❌ Parallel extraction failed", "error", err)
 
 		// Check if this is a timeout error
-		if workflow.IsTimeoutError(err) {
+		if temporal.IsTimeoutError(err) {
 			logger.Error("⏱️ Workflow timeout occurred", "error", err)
 
 			// Store partial results
@@ -337,7 +334,7 @@ func processPageChunk(
 	// Create a selector for managing concurrent goroutines
 	selector := workflow.NewSelector(ctx)
 	pendingTasks := 0
-	maxConcurrent := 3
+	maxConcurrent := 1
 	currentIndex := startIdx
 
 	// Function to start a page processing task
@@ -367,7 +364,7 @@ func processPageChunk(
 				logger.Error("❌ Page processing failed", "page", globalIndex+1, "error", err)
 
 				// Check if this is a timeout error
-				if workflow.IsTimeoutError(err) {
+				if temporal.IsTimeoutError(err) {
 					logger.Error("⏱️ Page processing timeout", "page", globalIndex+1, "error", err)
 				}
 			} else {
@@ -416,13 +413,14 @@ func processPageChunk(
 // aggregatePageResults combines individual page results into a single extraction output
 func aggregatePageResults(jobID string, pageResults []*PageProcessingOutput, pageCount int, options ExtractionOptions) ExtractionOutput {
 	type pageEntry struct {
-		Page   int             `json:"page"`
-		Result json.RawMessage `json:"result"`
+		Page   int         `json:"page"`
+		Result interface{} `json:"result"`
 	}
 
 	var pageEntries []pageEntry
 	var markdownParts []string
 	var totalConfidence float64
+	successCount := 0
 
 	for _, result := range pageResults {
 		if result.Error != "" {
@@ -440,16 +438,23 @@ func aggregatePageResults(jobID string, pageResults []*PageProcessingOutput, pag
 			}
 		}
 
+		var parsedResult interface{}
+		if json.Unmarshal([]byte(result.Content), &parsedResult) != nil {
+			// Preserve plain text/markdown content without breaking JSON marshaling.
+			parsedResult = result.Content
+		}
+
 		pageEntries = append(pageEntries, pageEntry{
 			Page:   result.PageNumber,
-			Result: json.RawMessage(result.Content),
+			Result: parsedResult,
 		})
 		totalConfidence += result.Confidence
+		successCount++
 	}
 
 	avgConfidence := 0.0
-	if len(pageResults) > 0 {
-		avgConfidence = totalConfidence / float64(len(pageResults))
+	if successCount > 0 {
+		avgConfidence = totalConfidence / float64(successCount)
 	}
 
 	// Aggregate pages into canonical output

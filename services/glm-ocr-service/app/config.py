@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = 30
     max_tokens_default: int = 2048
     max_tokens_limit: int = 8192
+    # Low-VRAM guardrails for consumer GPUs (e.g., 4GB cards)
+    low_vram_mode: bool = os.getenv("LOW_VRAM_MODE", "true").lower() == "true"
+    low_vram_max_tokens: int = int(os.getenv("LOW_VRAM_MAX_TOKENS", "2048"))
+    low_vram_max_image_edge: int = int(os.getenv("LOW_VRAM_MAX_IMAGE_EDGE", "896"))
+    low_vram_retry_max_tokens: int = int(os.getenv("LOW_VRAM_RETRY_MAX_TOKENS", "512"))
+    low_vram_retry_image_edge: int = int(os.getenv("LOW_VRAM_RETRY_IMAGE_EDGE", "640"))
     
     # Logging settings
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
