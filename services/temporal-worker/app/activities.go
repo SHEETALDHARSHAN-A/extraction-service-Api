@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,8 @@ import (
 
 // Activities holds connections to downstream services
 type Activities struct {
+	InferenceBackend   string
+	GLMOCRServiceURL   string
 	PreprocessingHost  string
 	PostprocessingHost string
 	TritonHost         string
@@ -268,12 +271,12 @@ func (a *Activities) downloadSourceFromMinIO(ctx context.Context, storagePath, j
 
 // PageProcessingInput contains input for processing a single page
 type PageProcessingInput struct {
-	JobID         string            `json:"job_id"`
-	PageNumber    int               `json:"page_number"`
-	ImagePath     string            `json:"image_path"`
-	Prompt        string            `json:"prompt"`
-	OptionsJSON   string            `json:"options_json"`
-	PrecisionMode string            `json:"precision_mode"`
+	JobID         string `json:"job_id"`
+	PageNumber    int    `json:"page_number"`
+	ImagePath     string `json:"image_path"`
+	Prompt        string `json:"prompt"`
+	OptionsJSON   string `json:"options_json"`
+	PrecisionMode string `json:"precision_mode"`
 }
 
 // PageProcessingOutput contains the result of processing a single page
@@ -450,6 +453,10 @@ func stringToUint8Tensor(name, value string) map[string]interface{} {
 // callTritonHTTP sends one image to Triton's HTTP inference endpoint and returns the
 // raw JSON result string plus the top-level confidence score.
 func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, options, precisionMode string) (string, float64, error) {
+	if strings.EqualFold(a.InferenceBackend, "glm_service") {
+		return a.callGLMOCRHTTP(ctx, imagePath, prompt, options, precisionMode)
+	}
+
 	tritonURL := fmt.Sprintf("http://%s:%s/v2/models/glm_ocr/infer", a.TritonHost, a.TritonHTTPPort)
 
 	// WORKAROUND: pass dynamic strings via request-level parameters to avoid
@@ -557,6 +564,72 @@ func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, opti
 	}
 
 	return generatedText, confidence, nil
+}
+
+func (a *Activities) callGLMOCRHTTP(ctx context.Context, imagePath, prompt, options, precisionMode string) (string, float64, error) {
+	glmURL := strings.TrimRight(a.GLMOCRServiceURL, "/") + "/extract-region"
+	if strings.TrimSpace(a.GLMOCRServiceURL) == "" {
+		glmURL = "http://localhost:8002/extract-region"
+	}
+
+	imgBytes, err := os.ReadFile(imagePath)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to read image for glm service: %w", err)
+	}
+
+	optionsMap := map[string]interface{}{}
+	if strings.TrimSpace(options) != "" {
+		if err := json.Unmarshal([]byte(options), &optionsMap); err != nil {
+			return "", 0, fmt.Errorf("invalid options json for glm service: %w", err)
+		}
+	}
+	if precisionMode != "" {
+		optionsMap["precision_mode"] = precisionMode
+	}
+
+	payload := map[string]interface{}{
+		"image":       base64.StdEncoding.EncodeToString(imgBytes),
+		"region_type": "text",
+		"prompt":      prompt,
+		"options":     optionsMap,
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", 0, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, glmURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: 30 * time.Minute}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return "", 0, fmt.Errorf("glm-ocr http %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var extractResp struct {
+		Content    string  `json:"content"`
+		Confidence float64 `json:"confidence"`
+	}
+	if err := json.Unmarshal(respBody, &extractResp); err != nil {
+		return "", 0, err
+	}
+
+	if strings.TrimSpace(extractResp.Content) == "" {
+		return "", 0, fmt.Errorf("missing content in glm-ocr response")
+	}
+
+	return extractResp.Content, extractResp.Confidence, nil
 }
 
 // generateMockResult returns format-specific mock output

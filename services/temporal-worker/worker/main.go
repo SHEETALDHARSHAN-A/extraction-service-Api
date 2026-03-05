@@ -40,6 +40,8 @@ func main() {
 
 	// Register activities with real service connections
 	activities := &app.Activities{
+		InferenceBackend:   cfg.InferenceBackend,
+		GLMOCRServiceURL:   cfg.GLMOCRServiceURL,
 		PreprocessingHost:  cfg.PreprocessingHost,
 		PostprocessingHost: cfg.PostprocessingHost,
 		TritonHost:         cfg.TritonHost,

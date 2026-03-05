@@ -26,10 +26,7 @@ except ImportError:
     USE_PRESIDIO = False
     logger.warning("Presidio not installed — using regex-based PII redaction fallback")
 
-# --- gRPC Generated Code (Placeholder until protoc is available) ---
-# In production, these would be auto-generated from postprocessing.proto
-
-import grpc
+# --- Lightweight contract wiring (JSON over gRPC) ---
 
 class PostProcessRequest:
     def __init__(self, raw_content="", job_id="", redact_pii=False):
@@ -51,6 +48,19 @@ class PostProcessResponse:
             "status": self.status,
             "error": self.error,
         }).encode()
+
+
+def _deserialize_postprocess_request(payload: bytes) -> PostProcessRequest:
+    data = json.loads(payload.decode("utf-8")) if payload else {}
+    return PostProcessRequest(
+        raw_content=data.get("RawContent", data.get("raw_content", "")),
+        job_id=data.get("JobId", data.get("job_id", "")),
+        redact_pii=bool(data.get("RedactPii", data.get("redact_pii", False))),
+    )
+
+
+def _serialize_postprocess_response(response: PostProcessResponse) -> bytes:
+    return response.SerializeToString()
 
 
 class PostProcessingServiceServicer:
@@ -163,13 +173,21 @@ def serve():
 
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
 
-    # In a real setup with protoc-generated code:
-    # postprocessing_pb2_grpc.add_PostProcessingServiceServicer_to_server(
-    #     PostProcessingServiceServicer(), server
-    # )
-
-    # For now, we register a generic service handler
+    # Register service using explicit generic handler so non-protobuf JSON
+    # contracts are still real network RPCs.
     servicer = PostProcessingServiceServicer()
+
+    rpc_method_handlers = {
+        "PostProcess": grpc.unary_unary_rpc_method_handler(
+            servicer.PostProcess,
+            request_deserializer=_deserialize_postprocess_request,
+            response_serializer=_serialize_postprocess_response,
+        ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+        "postprocessing.PostProcessingService", rpc_method_handlers
+    )
+    server.add_generic_rpc_handlers((generic_handler,))
 
     server.add_insecure_port(f"[::]:{port}")
     logger.info(f"🔍 Post-processing Service starting on port {port}")

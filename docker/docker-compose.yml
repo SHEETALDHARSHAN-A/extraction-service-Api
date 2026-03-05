@@ -62,6 +62,8 @@ services:
       - TEMPORAL_HOST=temporal:7233
       - TEMPORAL_NAMESPACE=default
       - TEMPORAL_TASK_QUEUE=document-processing-task-queue
+      - INFERENCE_BACKEND=triton
+      - GLM_OCR_SERVICE_URL=http://glm-ocr-service:8002
       - TRITON_HOST=triton
       - TRITON_GRPC_PORT=8001
       - TRITON_HTTP_PORT=8000

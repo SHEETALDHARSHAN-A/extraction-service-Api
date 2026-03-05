@@ -3,9 +3,11 @@ module github.com/user/idep/temporal-worker
 go 1.25.6
 
 replace github.com/user/idep/shared => ../../shared
+replace github.com/user/idep/api-gateway => ../api-gateway
 
 require (
 	github.com/minio/minio-go/v7 v7.0.98
+	github.com/user/idep/api-gateway v0.0.0-00010101000000-000000000000
 	github.com/user/idep/shared v0.0.0-00010101000000-000000000000
 	go.temporal.io/sdk v1.40.0
 	google.golang.org/grpc v1.79.1

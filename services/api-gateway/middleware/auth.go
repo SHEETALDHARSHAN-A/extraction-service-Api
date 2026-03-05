@@ -38,11 +38,15 @@ type keyInfo struct {
 }
 
 func loadAPIKeys() []keyInfo {
-	raw := getEnvDefault("IDEP_API_KEYS", "tp-proj-dev-key-123")
+	raw := getEnvAny([]string{"IDEP_API_KEYS", "API_KEYS"}, "tp-proj-dev-key-123")
 	var keys []keyInfo
 	for _, k := range strings.Split(raw, ",") {
 		k = strings.TrimSpace(k)
 		if k != "" {
+			// Support legacy entries like "api-key:role" while using the key part only.
+			if idx := strings.Index(k, ":"); idx > 0 {
+				k = strings.TrimSpace(k[:idx])
+			}
 			keys = append(keys, keyInfo{
 				key:    k,
 				isTest: strings.HasPrefix(k, "tp-test-"),
@@ -175,6 +179,15 @@ func RateLimit() gin.HandlerFunc {
 func getEnvDefault(key, fallback string) string {
 	if v, ok := os.LookupEnv(key); ok {
 		return v
+	}
+	return fallback
+}
+
+func getEnvAny(keys []string, fallback string) string {
+	for _, key := range keys {
+		if v, ok := os.LookupEnv(key); ok {
+			return v
+		}
 	}
 	return fallback
 }

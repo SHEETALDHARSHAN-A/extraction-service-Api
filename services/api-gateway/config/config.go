@@ -47,10 +47,10 @@ func Load() *Config {
 		EnableLayoutDetection:   getEnv("ENABLE_LAYOUT_DETECTION", "false") == "true",
 		CacheLayoutResults:      getEnv("CACHE_LAYOUT_RESULTS", "true") == "true",
 		MaxParallelRegions:      getEnvInt("MAX_PARALLEL_REGIONS", 5),
-		ServiceRequestTimeout:   getEnvInt("SERVICE_REQUEST_TIMEOUT", 30),
+		ServiceRequestTimeout:   getEnvIntAny([]string{"SERVICE_REQUEST_TIMEOUT", "SERVICE_TIMEOUT_SECONDS"}, 30),
 		ServiceRetryAttempts:    getEnvInt("SERVICE_RETRY_ATTEMPTS", 3),
 		CircuitBreakerThreshold: getEnvInt("CIRCUIT_BREAKER_THRESHOLD", 5),
-		CircuitBreakerTimeout:   getEnvInt("CIRCUIT_BREAKER_TIMEOUT", 60),
+		CircuitBreakerTimeout:   getEnvIntAny([]string{"CIRCUIT_BREAKER_TIMEOUT", "CIRCUIT_BREAKER_TIMEOUT_SECONDS"}, 60),
 		JaegerEndpoint:          getEnv("JAEGER_AGENT_ENDPOINT", "localhost:6831"),
 	}
 }
@@ -66,6 +66,17 @@ func getEnvInt(key string, fallback int) int {
 	if value, ok := os.LookupEnv(key); ok {
 		if intVal, err := strconv.Atoi(value); err == nil {
 			return intVal
+		}
+	}
+	return fallback
+}
+
+func getEnvIntAny(keys []string, fallback int) int {
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok {
+			if intVal, err := strconv.Atoi(value); err == nil {
+				return intVal
+			}
 		}
 	}
 	return fallback

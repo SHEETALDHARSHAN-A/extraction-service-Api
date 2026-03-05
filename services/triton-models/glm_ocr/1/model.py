@@ -504,7 +504,7 @@ class TritonPythonModel:
             # Try explicit tokenizer import first
             try:
                 self.processor = AutoProcessor.from_pretrained(
-                    MODEL_PATH, trust_remote_code=True
+                    MODEL_PATH
                 )
                 logger.info("... Tokenizer loaded successfully")
             except Exception as tokenizer_exc:
@@ -526,7 +526,6 @@ class TritonPythonModel:
             self.model = AutoModelForImageTextToText.from_pretrained(
                 MODEL_PATH,
                 torch_dtype=torch.float16,
-                trust_remote_code=True,
                 low_cpu_mem_usage=True,
             )
             

@@ -9,6 +9,8 @@ type WorkerConfig struct {
 	TemporalHost       string
 	TemporalNamespace  string
 	TaskQueue          string
+	InferenceBackend   string
+	GLMOCRServiceURL   string
 	TritonHost         string
 	TritonGRPCPort     string
 	TritonHTTPPort     string
@@ -29,6 +31,8 @@ func Load() *WorkerConfig {
 		TemporalHost:       getEnv("TEMPORAL_HOST", "localhost:7233"),
 		TemporalNamespace:  getEnv("TEMPORAL_NAMESPACE", "default"),
 		TaskQueue:          getEnv("TEMPORAL_TASK_QUEUE", "document-processing-task-queue"),
+		InferenceBackend:   getEnv("INFERENCE_BACKEND", "triton"),
+		GLMOCRServiceURL:   getEnv("GLM_OCR_SERVICE_URL", "http://localhost:8002"),
 		TritonHost:         getEnv("TRITON_HOST", "localhost"),
 		TritonGRPCPort:     getEnv("TRITON_GRPC_PORT", "8001"),
 		TritonHTTPPort:     getEnv("TRITON_HTTP_PORT", "8000"),

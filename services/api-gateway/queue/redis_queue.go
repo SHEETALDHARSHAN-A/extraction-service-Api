@@ -68,14 +68,14 @@ type RequestQueue interface {
 
 // RedisQueue implements RequestQueue using Redis
 type RedisQueue struct {
-	client                *redis.Client
-	queueKey              string
-	processingKey         string
-	statusKeyPrefix       string
-	gpuLockKey            string
-	metricsKey            string
-	avgProcessingTime     time.Duration
-	maxQueueLength        int64
+	client            *redis.Client
+	queueKey          string
+	processingKey     string
+	statusKeyPrefix   string
+	gpuLockKey        string
+	metricsKey        string
+	avgProcessingTime time.Duration
+	maxQueueLength    int64
 }
 
 // NewRedisQueue creates a new Redis-based request queue
@@ -88,7 +88,7 @@ func NewRedisQueue(client *redis.Client) *RedisQueue {
 		gpuLockKey:        "lock:gpu",
 		metricsKey:        "metrics:queue",
 		avgProcessingTime: 30 * time.Second, // Default estimate
-		maxQueueLength:    50,                // Maximum queue capacity
+		maxQueueLength:    50,               // Maximum queue capacity
 	}
 }
 
@@ -192,6 +192,21 @@ func (q *RedisQueue) UpdateStatus(ctx context.Context, jobID string, status JobS
 
 	// Update status
 	job.Status = status
+
+	// Any non-queued status must not remain in pending sorted-set,
+	// otherwise queue length drifts and can saturate capacity.
+	if status != StatusQueued {
+		q.client.ZRem(ctx, q.queueKey, jobID)
+	}
+
+	// Mark processing metadata when transitioning to PROCESSING.
+	if status == StatusProcessing {
+		now := time.Now()
+		if job.StartedAt == nil {
+			job.StartedAt = &now
+		}
+		q.client.HSet(ctx, q.processingKey, jobID, now.Unix())
+	}
 
 	// Set completion time if completed or failed
 	if status == StatusCompleted || status == StatusFailed {
@@ -323,6 +338,9 @@ func (q *RedisQueue) CancelJob(ctx context.Context, jobID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to remove job from queue: %w", err)
 	}
+
+	// Ensure job is not left in processing set
+	q.client.HDel(ctx, q.processingKey, jobID)
 
 	// Update status to failed
 	err = q.UpdateStatus(ctx, jobID, StatusFailed)

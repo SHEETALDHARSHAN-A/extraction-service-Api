@@ -41,15 +41,13 @@ class GLMInferenceEngine:
             
             # Load processor
             self.processor = AutoProcessor.from_pretrained(
-                self.model_path,
-                trust_remote_code=True
+                self.model_path
             )
             
             # Load model
             self.model = AutoModelForImageTextToText.from_pretrained(
                 self.model_path,
                 torch_dtype=torch.float16,
-                trust_remote_code=True,
                 low_cpu_mem_usage=True
             )
             

@@ -1,0 +1,368 @@
+{
+  "audit_scope": "Architecture and production-readiness review across API gateway, Temporal worker, queueing, OCR services, Triton model backend, Docker/runtime config, and observability.",
+  "risk_summary": {
+    "critical": 4,
+    "high": 6,
+    "medium": 5
+  },
+  "tasks": [
+    {
+      "id": "ARC-001",
+      "priority": "P0",
+      "severity": "critical",
+      "title": "Fix queue semantics to prevent permanent queue saturation",
+      "flaw": "Jobs are enqueued but workflows are started immediately; no consumer calls Dequeue, and pending zset entries are not removed during status transitions.",
+      "impact": "Queue length can grow to max and reject new jobs (HTTP 429) even while workers are idle.",
+      "actions": [
+        "Choose one model: true queue-driven dispatch OR direct Temporal dispatch (remove Redis queue).",
+        "If queue-driven: add a dedicated dispatcher that calls Dequeue and starts workflows.",
+        "Ensure status transitions remove pending entries atomically.",
+        "Add queue invariant tests (pending + processing + completed consistency)."
+      ],
+      "acceptance_criteria": [
+        "Queue depth reflects actual waiting jobs only.",
+        "No saturation under 200+ sequential jobs with normal completion.",
+        "Prometheus metrics match Redis state."
+      ],
+      "owner": "Backend Platform",
+      "estimate_days": 3,
+      "status": "in_progress",
+      "implementation_notes": [
+        "Queue status transitions now remove non-queued jobs from pending zset.",
+        "PROCESSING transition now records started_at and processing hash entry.",
+        "Workflow start failure now cancels queue job to prevent capacity leakage."
+      ]
+    },
+    {
+      "id": "ARC-002",
+      "priority": "P0",
+      "severity": "critical",
+      "title": "Replace placeholder post-processing gRPC contract with real protobuf-generated implementation",
+      "flaw": "Post-processing client/server are placeholder stubs; client returns success without network invoke, bypassing real redaction/validation.",
+      "impact": "Compliance and data-protection risk: PII redaction path is effectively non-authoritative.",
+      "actions": [
+        "Generate protobuf stubs for postprocessing service (Go + Python).",
+        "Implement real gRPC service registration in post-processing service.",
+        "Make worker call actual RPC and fail hard on unavailable post-processing.",
+        "Add contract tests to verify redaction behavior end-to-end."
+      ],
+      "acceptance_criteria": [
+        "Worker invokes real gRPC endpoint (verified by integration test and logs).",
+        "PII redaction toggles produce expected output diffs.",
+        "No placeholder client code remains in runtime path."
+      ],
+      "owner": "Platform + AI Pipeline",
+      "estimate_days": 4,
+      "status": "in_progress",
+      "implementation_notes": [
+        "Replaced local success bypass in Go client with real grpc Invoke to /postprocessing.PostProcessingService/PostProcess.",
+        "Added server-side RPC registration in post-processing service using grpc generic handler with JSON request/response serialization.",
+        "Remaining work: swap placeholder contract with protoc-generated stubs for strict protobuf compliance."
+      ]
+    },
+    {
+      "id": "ARC-003",
+      "priority": "P0",
+      "severity": "critical",
+      "title": "Resolve environment variable drift and auth misconfiguration",
+      "flaw": "Config keys differ across compose/.env/code (e.g., API key var names, timeout names, PaddleOCR var aliases).",
+      "impact": "Silent fallback to defaults, invalid auth in some environments, inconsistent behavior between local/dev/prod.",
+      "actions": [
+        "Create a single env contract doc + schema validation at startup.",
+        "Unify names (IDEP_API_KEYS, SERVICE_REQUEST_TIMEOUT, CIRCUIT_BREAKER_TIMEOUT, PaddleOCR prefixed keys).",
+        "Fail startup on unknown/missing critical vars.",
+        "Add env conformance test in CI."
+      ],
+      "acceptance_criteria": [
+        "All services start with same behavior in local and compose.",
+        "No fallback to insecure defaults for auth/credentials.",
+        "Startup validation reports zero mismatches."
+      ],
+      "owner": "SRE + Backend",
+      "estimate_days": 2,
+      "status": "in_progress",
+      "implementation_notes": [
+        "Gateway config now supports timeout/circuit-breaker env aliases for compose compatibility.",
+        "Remaining work: startup schema validation and CI env conformance checks."
+      ]
+    },
+    {
+      "id": "ARC-004",
+      "priority": "P0",
+      "severity": "critical",
+      "title": "Eliminate hardcoded credentials and insecure defaults",
+      "flaw": "Default database/minio/grafana credentials and dev API keys are embedded in runtime config.",
+      "impact": "Immediate security exposure in production-like deployments.",
+      "actions": [
+        "Move secrets to secret manager / Docker secrets / env injection pipeline.",
+        "Remove static dev credentials from compose default profiles.",
+        "Add startup guard that blocks boot with known weak/default secrets."
+      ],
+      "acceptance_criteria": [
+        "No hardcoded secrets in runtime manifests.",
+        "Security scan finds zero default credentials.",
+        "Production profile requires explicit secret injection."
+      ],
+      "owner": "Security + SRE",
+      "estimate_days": 2
+    },
+    {
+      "id": "ARC-005",
+      "priority": "P1",
+      "severity": "high",
+      "title": "Refactor rate limiting for bounded memory and correct identity keying",
+      "flaw": "In-memory map grows per unique Authorization/IP and is not distributed across replicas.",
+      "impact": "Memory growth + inconsistent throttling in multi-instance deployments.",
+      "actions": [
+        "Move rate limiting to Redis-based sliding window/token bucket.",
+        "Key by normalized API key hash, not full header string.",
+        "Add TTL eviction and metrics."
+      ],
+      "acceptance_criteria": [
+        "Stable memory profile under high-cardinality traffic.",
+        "Consistent limits across multiple gateway replicas."
+      ],
+      "owner": "Backend Platform",
+      "estimate_days": 2
+    },
+    {
+      "id": "ARC-006",
+      "priority": "P1",
+      "severity": "high",
+      "title": "Harden service-to-service transport and trust boundaries",
+      "flaw": "Internal calls use insecure gRPC/HTTP and permissive CORS (`*`) with credentials settings.",
+      "impact": "Lateral movement risk and browser policy inconsistencies.",
+      "actions": [
+        "Use mTLS for gRPC internal traffic where feasible.",
+        "Restrict CORS origins by environment.",
+        "Disable credentials with wildcard origins."
+      ],
+      "acceptance_criteria": [
+        "No wildcard CORS in production profile.",
+        "Internal RPC channels are authenticated/encrypted."
+      ],
+      "owner": "Security + Backend",
+      "estimate_days": 3
+    },
+    {
+      "id": "ARC-007",
+      "priority": "P1",
+      "severity": "high",
+      "title": "Introduce robust readiness/liveness and startup dependency checks",
+      "flaw": "Several services lack healthchecks or rely on shallow checks; gateway health duplicates checks for Triton via GLM endpoint.",
+      "impact": "False healthy states and unstable startup sequencing.",
+      "actions": [
+        "Add explicit healthchecks for api-gateway, temporal-worker, preprocessing, post-processing.",
+        "Split readiness vs liveness endpoints.",
+        "Make gateway health check actual dependency graph independently."
+      ],
+      "acceptance_criteria": [
+        "Compose/K8s only routes traffic to ready services.",
+        "Health endpoint correctly reports each dependency."
+      ],
+      "owner": "SRE",
+      "estimate_days": 2
+    },
+    {
+      "id": "ARC-008",
+      "priority": "P1",
+      "severity": "high",
+      "title": "Formalize database migration strategy",
+      "flaw": "Schema changes rely on app AutoMigrate at startup.",
+      "impact": "Uncontrolled schema drift and risky rollbacks in production.",
+      "actions": [
+        "Adopt explicit migration tool (goose/atlas/liquibase/flyway).",
+        "Gate app startup on migration state and version."
+      ],
+      "acceptance_criteria": [
+        "Versioned migrations with rollback scripts exist.",
+        "No runtime AutoMigrate in production profile."
+      ],
+      "owner": "Backend",
+      "estimate_days": 2
+    },
+    {
+      "id": "ARC-009",
+      "priority": "P1",
+      "severity": "high",
+      "title": "Fix queue/job lifecycle observability gaps",
+      "flaw": "Job completion/failure/page/confidence metrics are partially instrumented but mostly not emitted.",
+      "impact": "Operational blind spots and weak SLA tracking.",
+      "actions": [
+        "Emit lifecycle events at workflow completion/failure sync path.",
+        "Add queue lag, workflow latency, and downstream error-rate dashboards.",
+        "Alert on queue depth, workflow retries, and model failure spikes."
+      ],
+      "acceptance_criteria": [
+        "Metrics dashboards show end-to-end success rate and latency percentiles.",
+        "Alerts fire on synthetic failure scenarios."
+      ],
+      "owner": "SRE + Backend",
+      "estimate_days": 2
+    },
+    {
+      "id": "ARC-010",
+      "priority": "P1",
+      "severity": "high",
+      "title": "Unify API key format and remove role suffix ambiguity",
+      "flaw": "Some env examples include role suffix in key values while middleware expects exact key token.",
+      "impact": "Auth failures and operator confusion across environments.",
+      "actions": [
+        "Define canonical API key format.",
+        "If role metadata needed, store separate mapping structure.",
+        "Add startup validator and auth unit tests for valid/invalid key shapes."
+      ],
+      "acceptance_criteria": [
+        "All documented sample keys authenticate correctly.",
+        "No role suffix parsing ambiguity remains."
+      ],
+      "owner": "Backend",
+      "estimate_days": 1,
+      "status": "in_progress",
+      "implementation_notes": [
+        "Auth loader now accepts IDEP_API_KEYS and API_KEYS.",
+        "Legacy key entries with role suffix (key:role) are normalized to key-only at load time."
+      ]
+    },
+    {
+      "id": "ARC-011",
+      "priority": "P2",
+      "severity": "medium",
+      "title": "Pin infra image versions and reproducible build inputs",
+      "flaw": "Use of `latest` tags in observability stack and mixed dependency resolution.",
+      "impact": "Non-deterministic deployments and surprise regressions.",
+      "actions": [
+        "Pin image digests/tags for Prometheus, Grafana, Jaeger.",
+        "Lock Python/Go dependencies for release builds."
+      ],
+      "acceptance_criteria": [
+        "Rebuild on different days yields same versions.",
+        "Upgrade flow is explicit via PR."
+      ],
+      "owner": "SRE",
+      "estimate_days": 1
+    },
+    {
+      "id": "ARC-012",
+      "priority": "P2",
+      "severity": "medium",
+      "title": "Separate dev and prod compose profiles cleanly",
+      "flaw": "Dev overrides and debug settings can bleed into runtime assumptions.",
+      "impact": "Behavior drift and accidental debug exposure.",
+      "actions": [
+        "Use compose profiles (`dev`, `prod`, `e2e`) with explicit commands.",
+        "Disable reload/debug and admin tools in prod profile."
+      ],
+      "acceptance_criteria": [
+        "Prod profile has no debug tools, no code mounts, no reload.",
+        "Dev profile remains fast for iteration."
+      ],
+      "owner": "SRE",
+      "estimate_days": 1,
+      "status": "in_progress",
+      "implementation_notes": [
+        "Added explicit inference backend env in docker compose for deterministic docker behavior.",
+        "Added local startup script and runtime guide to support local app-service execution with local infra.",
+        "Remaining work: introduce compose profiles (dev/prod/e2e) and remove implicit override coupling."
+      ]
+    },
+    {
+      "id": "ARC-016",
+      "priority": "P1",
+      "severity": "high",
+      "title": "Support dual runtime (Docker + Local) for inference pipeline",
+      "flaw": "Worker inference path was Triton-only, limiting local non-Docker execution options.",
+      "impact": "Developers with Docker/GPU issues were blocked from running end-to-end locally.",
+      "actions": [
+        "Add runtime-selectable inference backend in temporal worker.",
+        "Keep Triton path for Docker while adding direct GLM service path for local.",
+        "Provide local startup script and runtime documentation."
+      ],
+      "acceptance_criteria": [
+        "Docker mode continues using Triton without behavior regressions.",
+        "Local mode runs with INFERENCE_BACKEND=glm_service and processes documents.",
+        "Switching backends requires env change only (no code edits)."
+      ],
+      "owner": "Platform + Backend",
+      "estimate_days": 2,
+      "status": "completed",
+      "implementation_notes": [
+        "Added INFERENCE_BACKEND and GLM_OCR_SERVICE_URL to worker config and wiring.",
+        "Implemented direct GLM HTTP inference fallback in temporal-worker activities.",
+        "Added start_services_local.ps1 and LOCAL_RUN_GUIDE.md for local execution."
+      ]
+    },
+    {
+      "id": "ARC-013",
+      "priority": "P2",
+      "severity": "medium",
+      "title": "Add CI pipeline for contract, integration, and security gates",
+      "flaw": "No repository CI workflow detected for automated checks.",
+      "impact": "Regressions can merge unnoticed.",
+      "actions": [
+        "Add CI stages: lint, unit, contract tests, integration smoke, secret scan.",
+        "Require passing checks before merge."
+      ],
+      "acceptance_criteria": [
+        "PRs blocked on failing architecture-critical checks.",
+        "Post-processing contract tests run on each change."
+      ],
+      "owner": "DevEx",
+      "estimate_days": 2
+    },
+    {
+      "id": "ARC-014",
+      "priority": "P2",
+      "severity": "medium",
+      "title": "Improve failure-mode behavior for Triton/model startup",
+      "flaw": "Model startup and fallback modes are complex; strict/fallback behavior can be confusing operationally.",
+      "impact": "Hard-to-diagnose startup failures under GPU/resource pressure.",
+      "actions": [
+        "Document deterministic startup matrix (strict real vs fallback).",
+        "Expose explicit readiness reason codes and startup diagnostics endpoint."
+      ],
+      "acceptance_criteria": [
+        "Operators can identify failure reason in <2 minutes from logs/health response.",
+        "No ambiguous 'healthy but degraded' states."
+      ],
+      "owner": "ML Platform",
+      "estimate_days": 2
+    },
+    {
+      "id": "ARC-015",
+      "priority": "P3",
+      "severity": "medium",
+      "title": "Rationalize duplicate docs and enforce doc-to-config consistency checks",
+      "flaw": "Runbook/API/demo docs contain mixed assumptions and env names.",
+      "impact": "Onboarding friction and operational mistakes.",
+      "actions": [
+        "Create single source of truth for runtime configuration matrix.",
+        "Add doc lint/check script against env schema."
+      ],
+      "acceptance_criteria": [
+        "No contradictory env variable names across docs/code.",
+        "New config changes fail CI unless docs updated."
+      ],
+      "owner": "Platform Docs",
+      "estimate_days": 1
+    }
+  ],
+  "recommended_execution_order": [
+    "ARC-001",
+    "ARC-002",
+    "ARC-003",
+    "ARC-004",
+    "ARC-007",
+    "ARC-005",
+    "ARC-006",
+    "ARC-008",
+    "ARC-009",
+    "ARC-010",
+    "ARC-011",
+    "ARC-012",
+    "ARC-016",
+    "ARC-013",
+    "ARC-014",
+    "ARC-015"
+  ]
+}

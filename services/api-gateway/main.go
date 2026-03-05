@@ -31,15 +31,15 @@ import (
 )
 
 var (
-	db                *gorm.DB
-	minioStore        *storage.MinioClient
-	temporalClient    client.Client
-	redisCache        *cache.RedisCache
-	requestQueue      queue.RequestQueue
-	cfg               *config.Config
-	paddleOCRClient   *clients.PaddleOCRClient
-	glmOCRClient      *clients.GLMOCRClient
-	docOrchestrator   *orchestrator.Orchestrator
+	db              *gorm.DB
+	minioStore      *storage.MinioClient
+	temporalClient  client.Client
+	redisCache      *cache.RedisCache
+	requestQueue    queue.RequestQueue
+	cfg             *config.Config
+	paddleOCRClient *clients.PaddleOCRClient
+	glmOCRClient    *clients.GLMOCRClient
+	docOrchestrator *orchestrator.Orchestrator
 )
 
 func main() {
@@ -50,7 +50,7 @@ func main() {
 	if endpoint := cfg.JaegerEndpoint; endpoint != "" {
 		jaegerEndpoint = endpoint
 	}
-	
+
 	tracer, closer, err := tracing.InitJaeger("idep-api-gateway", jaegerEndpoint)
 	if err != nil {
 		log.Printf("⚠️ Failed to initialize Jaeger tracer (non-fatal): %v", err)
@@ -231,11 +231,11 @@ func healthCheck(c *gin.Context) {
 	if requestQueue != nil {
 		queueLength, err := requestQueue.GetQueueLength(ctx)
 		estimatedWait, _ := requestQueue.GetEstimatedWaitTime(ctx)
-		
+
 		queueStatus := gin.H{
 			"status": "healthy",
 		}
-		
+
 		if err != nil {
 			queueStatus["status"] = "unhealthy"
 			queueStatus["error"] = err.Error()
@@ -244,7 +244,7 @@ func healthCheck(c *gin.Context) {
 			queueStatus["queue_length"] = queueLength
 			queueStatus["estimated_wait_time_seconds"] = int(estimatedWait.Seconds())
 		}
-		
+
 		components["request_queue"] = queueStatus
 	} else {
 		components["request_queue"] = gin.H{
@@ -308,12 +308,12 @@ func checkServiceHealth(url string) gin.H {
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
-	
+
 	resp, err := client.Get(url)
 	if err != nil {
 		return gin.H{
-			"status":           "unhealthy",
-			"error":            err.Error(),
+			"status":            "unhealthy",
+			"error":             err.Error(),
 			"last_health_check": time.Now().Format(time.RFC3339),
 		}
 	}
@@ -321,8 +321,8 @@ func checkServiceHealth(url string) gin.H {
 
 	if resp.StatusCode != http.StatusOK {
 		return gin.H{
-			"status":           "unhealthy",
-			"response_code":    resp.StatusCode,
+			"status":            "unhealthy",
+			"response_code":     resp.StatusCode,
 			"last_health_check": time.Now().Format(time.RFC3339),
 		}
 	}
@@ -347,10 +347,10 @@ func uploadDocument(c *gin.Context) {
 	if header.Size > maxDocumentSize {
 		maxSizeMB := float64(maxDocumentSize) / (1024 * 1024)
 		providedSizeMB := float64(header.Size) / (1024 * 1024)
-		
+
 		log.Printf("❌ Document too large: %s (%.2fMB) exceeds maximum of %.2fMB",
 			header.Filename, providedSizeMB, maxSizeMB)
-		
+
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
 			"error":            "Document too large",
 			"max_size_mb":      maxSizeMB,
@@ -429,7 +429,7 @@ func uploadDocument(c *gin.Context) {
 	maxTokens := c.DefaultPostForm("max_tokens", "4096")
 	precisionMode := c.DefaultPostForm("precision_mode", "normal")
 	extractFieldsRaw := strings.TrimSpace(c.DefaultPostForm("extract_fields", ""))
-	
+
 	// Layout detection options
 	enableLayoutDetection := c.DefaultPostForm("enable_layout_detection", "false") == "true"
 	minConfidence := c.DefaultPostForm("min_confidence", "0.5")
@@ -438,7 +438,7 @@ func uploadDocument(c *gin.Context) {
 	parallelRegionProcessing := c.DefaultPostForm("parallel_region_processing", "true") == "true"
 	maxParallelRegions := c.DefaultPostForm("max_parallel_regions", "5")
 	cacheLayoutResults := c.DefaultPostForm("cache_layout_results", "true") == "true"
-	
+
 	extractFields := []string{}
 	if extractFieldsRaw != "" {
 		for _, f := range strings.Split(extractFieldsRaw, ",") {
@@ -527,11 +527,11 @@ func uploadDocument(c *gin.Context) {
 
 		c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSeconds))
 		c.JSON(http.StatusTooManyRequests, gin.H{
-			"error":                      "Queue is full, please retry later",
-			"retry_after_seconds":        retryAfterSeconds,
+			"error":                       "Queue is full, please retry later",
+			"retry_after_seconds":         retryAfterSeconds,
 			"estimated_wait_time_seconds": int(estimatedWait.Seconds()),
 		})
-		
+
 		// Clean up the job record since we couldn't enqueue
 		db.Delete(&job)
 		return
@@ -570,9 +570,9 @@ func uploadDocument(c *gin.Context) {
 			"enable_layout_detection":    enableLayoutDetection,
 			"parallel_region_processing": parallelRegionProcessing,
 			"layout_detection_options": map[string]interface{}{
-				"min_confidence":   minConfidence,
-				"detect_tables":    detectTables,
-				"detect_formulas":  detectFormulas,
+				"min_confidence":       minConfidence,
+				"detect_tables":        detectTables,
+				"detect_formulas":      detectFormulas,
 				"max_parallel_regions": maxParallelRegions,
 				"cache_layout_results": cacheLayoutResults,
 			},
@@ -582,6 +582,11 @@ func uploadDocument(c *gin.Context) {
 	we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, "DocumentProcessingWorkflow", workflowInput)
 	if err != nil {
 		log.Printf("Failed to start workflow for job %s: %v", jobID, err)
+		if requestQueue != nil {
+			if qErr := requestQueue.CancelJob(c.Request.Context(), jobID); qErr != nil {
+				log.Printf("⚠️ Failed to remove failed-start job from queue %s: %v", jobID, qErr)
+			}
+		}
 		db.Model(&job).Updates(map[string]interface{}{
 			"status":        models.StatusFailed,
 			"error_message": fmt.Sprintf("Failed to start workflow: %v", err),
