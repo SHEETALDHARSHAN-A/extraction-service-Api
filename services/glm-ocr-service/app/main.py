@@ -1,4 +1,5 @@
 """GLM-OCR Service - FastAPI application."""
+import asyncio
 
 import time
 import logging
@@ -104,6 +105,25 @@ logging_config = {
 
 logging.config.dictConfig(logging_config)
 logger = logging.getLogger(__name__)
+
+
+async def _extract_with_timeout(
+    image_base64: str,
+    prompt: str,
+    max_tokens: int,
+    output_format: str,
+) -> tuple[str, float, int, int]:
+    """Run blocking inference in a worker thread with a hard timeout."""
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            inference_engine.extract_content,
+            image_base64=image_base64,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            output_format=output_format,
+        ),
+        timeout=float(settings.request_timeout_seconds),
+    )
 
 
 def infer_page_bbox(image_base64: str) -> list[int]:
@@ -680,11 +700,22 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
         logger.info(f"Extracting region: type={request.region_type}, prompt={prompt[:50]}... [request_id={request_id}]")
         
         # Extract content
-        content, confidence, prompt_tokens, completion_tokens = inference_engine.extract_content(
+        content, confidence, prompt_tokens, completion_tokens = await _extract_with_timeout(
             image_base64=request.image,
             prompt=prompt,
             max_tokens=max_tokens,
             output_format=output_format
+        )
+
+    except asyncio.TimeoutError:
+        logger.error(
+            f"Inference timeout after {settings.request_timeout_seconds}s [request_id={request_id}]"
+        )
+        extraction_requests_total.labels(endpoint='extract_region', status='timeout_error').inc()
+        raise HTTPException(
+            status_code=504,
+            detail=f"Inference timeout after {settings.request_timeout_seconds}s",
+            headers={"Retry-After": "10"}
         )
     
     except Exception as e:
@@ -1008,11 +1039,23 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
             )
             
             # Extract content
-            content, confidence, prompt_tokens, completion_tokens = inference_engine.extract_content(
+            content, confidence, prompt_tokens, completion_tokens = await _extract_with_timeout(
                 image_base64=region.image,
                 prompt=prompt,
                 max_tokens=max_tokens,
                 output_format=output_format
+            )
+
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Batch inference timeout for region {region.region_id} after "
+                f"{settings.request_timeout_seconds}s [request_id={request_id}]"
+            )
+            extraction_requests_total.labels(endpoint='extract_regions_batch', status='timeout_error').inc()
+            raise HTTPException(
+                status_code=504,
+                detail=f"Batch inference timeout after {settings.request_timeout_seconds}s",
+                headers={"Retry-After": "10"}
             )
             
             total_prompt_tokens += prompt_tokens

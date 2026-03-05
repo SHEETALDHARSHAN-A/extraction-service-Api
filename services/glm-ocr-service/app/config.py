@@ -17,13 +17,13 @@ class Settings(BaseSettings):
     
     # Model settings
     glm_model_path: str = os.getenv("GLM_MODEL_PATH", "zai-org/GLM-OCR")
-    glm_precision_mode: str = os.getenv("GLM_PRECISION_MODE", "normal")
+    glm_precision_mode: str = os.getenv("GLM_PRECISION_MODE", "high")
     cuda_visible_devices: Optional[str] = os.getenv("CUDA_VISIBLE_DEVICES")
     
     # Processing settings
     max_image_size_mb: int = 10
     max_batch_size: int = 10
-    request_timeout_seconds: int = 30
+    request_timeout_seconds: int = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "90"))
     max_tokens_default: int = 2048
     max_tokens_limit: int = 8192
     # Low-VRAM guardrails for consumer GPUs (e.g., 4GB cards)
@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     low_vram_max_image_edge: int = int(os.getenv("LOW_VRAM_MAX_IMAGE_EDGE", "896"))
     low_vram_retry_max_tokens: int = int(os.getenv("LOW_VRAM_RETRY_MAX_TOKENS", "512"))
     low_vram_retry_image_edge: int = int(os.getenv("LOW_VRAM_RETRY_IMAGE_EDGE", "640"))
+    # Chunk very large pages into overlapping vertical segments to reduce VRAM spikes
+    # while preserving extraction quality.
+    chunk_large_pages: bool = os.getenv("CHUNK_LARGE_PAGES", "true").lower() == "true"
+    chunk_trigger_max_edge: int = int(os.getenv("CHUNK_TRIGGER_MAX_EDGE", "1400"))
+    chunk_segment_count: int = int(os.getenv("CHUNK_SEGMENT_COUNT", "3"))
+    chunk_overlap_px: int = int(os.getenv("CHUNK_OVERLAP_PX", "120"))
+    chunk_segment_max_tokens: int = int(os.getenv("CHUNK_SEGMENT_MAX_TOKENS", "1024"))
     
     # Logging settings
     log_level: str = os.getenv("LOG_LEVEL", "INFO")

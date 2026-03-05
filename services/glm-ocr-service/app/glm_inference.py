@@ -113,77 +113,135 @@ class GLMInferenceEngine:
             image = self._decode_base64_image(image_base64)
             image = self._resize_for_low_vram(image)
 
-            import torch
-            run_configs = [{
-                "max_tokens": max_tokens,
-                "max_edge": settings.low_vram_max_image_edge,
-                "label": "primary",
-            }]
-            if self.device == "cuda" and settings.low_vram_mode:
-                run_configs.append({
-                    "max_tokens": min(max_tokens, int(settings.low_vram_retry_max_tokens)),
-                    "max_edge": int(settings.low_vram_retry_image_edge),
-                    "label": "low-vram-retry",
-                })
+            if self._should_chunk_image(image):
+                return self._extract_content_chunked(image, prompt, max_tokens)
 
-            last_error = None
-            for cfg in run_configs:
-                run_image = self._resize_image_to_edge(image, int(cfg["max_edge"]))
-                inputs = self._build_model_inputs(run_image, prompt)
-
-                # Move inputs to device
-                if self.device == "cuda":
-                    inputs = {k: v.to(self.device) for k, v in inputs.items()}
-
-                try:
-                    with torch.no_grad():
-                        outputs = self.model.generate(
-                            **inputs,
-                            max_new_tokens=int(cfg["max_tokens"]),
-                            use_cache=False,
-                            do_sample=False,
-                            num_beams=1,
-                        )
-                    break
-                except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-                    error_str = str(e).lower()
-                    if self.device == "cuda" and ("out of memory" in error_str or "cuda" in error_str):
-                        last_error = e
-                        logger.warning(
-                            "CUDA OOM during %s attempt (max_tokens=%s, max_edge=%s): %s",
-                            cfg["label"], cfg["max_tokens"], cfg["max_edge"], e,
-                        )
-                        torch.cuda.empty_cache()
-                        continue
-                    raise
-            else:
-                raise torch.cuda.OutOfMemoryError(
-                    f"CUDA out of memory during inference after retries: {last_error}"
-                )
-            
-            # Decode output
-            generated_text = self.processor.decode(
-                outputs[0][inputs["input_ids"].shape[1]:],
-                skip_special_tokens=False,
-            )
-            
-            # Extract content (remove prompt if present)
-            content = generated_text
-            if prompt in content:
-                content = content.replace(prompt, "").strip()
-            
-            # Estimate token counts (approximate)
-            prompt_tokens = len(inputs.get("input_ids", [[]])[0])
-            completion_tokens = len(outputs[0]) - prompt_tokens
-            
-            # Confidence is approximate (GLM-OCR doesn't provide confidence scores)
-            confidence = 0.90
-            
-            return content, confidence, prompt_tokens, completion_tokens
+            return self._extract_single_image(image, prompt, max_tokens)
             
         except Exception as e:
             logger.error(f"Inference failed: {e}")
             raise
+
+    def _extract_single_image(self, image: Image.Image, prompt: str, max_tokens: int) -> Tuple[str, float, int, int]:
+        """Run inference for a single prepared image with low-VRAM retry logic."""
+        import torch
+
+        run_configs = [{
+            "max_tokens": max_tokens,
+            "max_edge": settings.low_vram_max_image_edge,
+            "label": "primary",
+        }]
+        if self.device == "cuda" and settings.low_vram_mode:
+            run_configs.append({
+                "max_tokens": min(max_tokens, int(settings.low_vram_retry_max_tokens)),
+                "max_edge": int(settings.low_vram_retry_image_edge),
+                "label": "low-vram-retry",
+            })
+
+        last_error = None
+        for cfg in run_configs:
+            run_image = self._resize_image_to_edge(image, int(cfg["max_edge"]))
+            inputs = self._build_model_inputs(run_image, prompt)
+
+            if self.device == "cuda":
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+            try:
+                logger.info(
+                    "Generation attempt=%s max_tokens=%s max_edge=%s max_time=%ss",
+                    cfg["label"], cfg["max_tokens"], cfg["max_edge"], settings.request_timeout_seconds,
+                )
+                with torch.no_grad():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=int(cfg["max_tokens"]),
+                        max_time=float(settings.request_timeout_seconds),
+                        use_cache=False,
+                        do_sample=False,
+                        num_beams=1,
+                    )
+                generated_text = self.processor.decode(
+                    outputs[0][inputs["input_ids"].shape[1]:],
+                    skip_special_tokens=False,
+                )
+                content = generated_text.replace(prompt, "").strip() if prompt in generated_text else generated_text
+                prompt_tokens = len(inputs.get("input_ids", [[]])[0])
+                completion_tokens = len(outputs[0]) - prompt_tokens
+                return content, 0.90, prompt_tokens, completion_tokens
+            except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+                error_str = str(e).lower()
+                if self.device == "cuda" and ("out of memory" in error_str or "cuda" in error_str):
+                    last_error = e
+                    logger.warning(
+                        "CUDA OOM during %s attempt (max_tokens=%s, max_edge=%s): %s",
+                        cfg["label"], cfg["max_tokens"], cfg["max_edge"], e,
+                    )
+                    torch.cuda.empty_cache()
+                    continue
+                raise
+
+        raise torch.cuda.OutOfMemoryError(
+            f"CUDA out of memory during inference after retries: {last_error}"
+        )
+
+    def _should_chunk_image(self, image: Image.Image) -> bool:
+        """Determine if image should be split into segments before OCR."""
+        if not settings.chunk_large_pages:
+            return False
+        if self.device != "cuda":
+            return False
+        width, height = image.size
+        return max(width, height) >= int(settings.chunk_trigger_max_edge)
+
+    def _extract_content_chunked(self, image: Image.Image, prompt: str, max_tokens: int) -> Tuple[str, float, int, int]:
+        """Split large page into overlapping vertical segments, OCR each, then merge text."""
+        segment_count = max(2, int(settings.chunk_segment_count))
+        overlap = max(0, int(settings.chunk_overlap_px))
+        segment_token_cap = max(256, int(settings.chunk_segment_max_tokens))
+        per_segment_tokens = min(int(max_tokens), segment_token_cap)
+
+        segments = self._split_into_vertical_segments(image, segment_count, overlap)
+        logger.info(
+            "Chunked OCR active: segments=%s overlap_px=%s per_segment_tokens=%s",
+            len(segments), overlap, per_segment_tokens,
+        )
+
+        contents = []
+        prompt_total = 0
+        completion_total = 0
+        conf_total = 0.0
+
+        for idx, seg in enumerate(segments):
+            logger.info("Processing chunk %s/%s", idx + 1, len(segments))
+            content, confidence, p_tokens, c_tokens = self._extract_single_image(seg, prompt, per_segment_tokens)
+            if content.strip():
+                contents.append(content.strip())
+            prompt_total += p_tokens
+            completion_total += c_tokens
+            conf_total += confidence
+
+        merged = "\n\n".join(contents)
+        avg_conf = conf_total / float(len(segments)) if segments else 0.0
+        return merged, avg_conf, prompt_total, completion_total
+
+    def _split_into_vertical_segments(self, image: Image.Image, segment_count: int, overlap_px: int) -> list[Image.Image]:
+        """Split image into overlapping top-to-bottom segments."""
+        width, height = image.size
+        band_h = max(1, height // segment_count)
+        segments: list[Image.Image] = []
+
+        for i in range(segment_count):
+            top = max(0, i * band_h - overlap_px)
+            bottom = min(height, (i + 1) * band_h + overlap_px)
+            if i == segment_count - 1:
+                bottom = height
+            if bottom <= top:
+                continue
+            segments.append(image.crop((0, top, width, bottom)))
+
+        if not segments:
+            segments.append(image)
+        return segments
 
     def _build_model_inputs(self, image: Image.Image, prompt: str):
         """Prepare chat-template inputs for GLM-OCR from image and prompt."""

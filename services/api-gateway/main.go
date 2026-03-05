@@ -452,7 +452,7 @@ func uploadDocument(c *gin.Context) {
 	maxPages := c.DefaultPostForm("max_pages", "0")
 	temperature := c.DefaultPostForm("temperature", "0.0")
 	maxTokens := c.DefaultPostForm("max_tokens", "4096")
-	precisionMode := c.DefaultPostForm("precision_mode", "normal")
+	precisionMode := c.DefaultPostForm("precision_mode", "high")
 	extractFieldsRaw := strings.TrimSpace(c.DefaultPostForm("extract_fields", ""))
 
 	// Layout detection options
