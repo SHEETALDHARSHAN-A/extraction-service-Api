@@ -32,6 +32,8 @@ docker compose -f docker/docker-compose.yml up -d
 
 Use this path when you want to run and test services directly on your machine.
 
+For full startup instructions (quick + manual per service), see `docs/SERVICES_STARTUP.md`.
+
 ### 1. One-time infra setup
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\setup_local_infra.ps1
@@ -64,6 +66,27 @@ test_local_e2e.bat
 powershell -ExecutionPolicy Bypass -File scripts\stop_local_infra.ps1
 ```
 Then close remaining `IDEP-*` service windows if they are still open.
+
+### Troubleshooting Quick Fixes
+
+1. Ports already in use
+
+```powershell
+Get-NetTCPConnection -LocalPort 8000,8001,8002,50051,50052,50061,50062,7233,6379 -ErrorAction SilentlyContinue
+```
+
+2. Infra/service state looks stale
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\stop_local_infra.ps1
+powershell -ExecutionPolicy Bypass -File scripts\start_local_infra.ps1
+start_local_bg.bat
+```
+
+3. API up but extraction fails
+- Verify `http://localhost:8002/health` (GLM service).
+- Verify worker is running (`services/temporal-worker`).
+- Re-run `test_local_e2e.bat` after both are healthy.
 
 ## Service Features
 
