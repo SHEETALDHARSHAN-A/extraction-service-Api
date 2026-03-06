@@ -50,7 +50,8 @@ class ExtractionOptions(AppBaseModel):
 class RegionExtractionRequest(AppBaseModel):
     """Request model for single region extraction."""
     
-    image: str = Field(..., description="Base64 encoded cropped region image")
+    image: Optional[str] = Field(None, description="Base64 encoded cropped region image")
+    image_path: Optional[str] = Field(None, description="Local file path or URL to the image")
     region_type: str = Field(..., description="Type of region: text, table, formula, title, figure")
     prompt: Optional[str] = Field(None, description="Custom prompt override")
     options: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Processing options")
@@ -63,8 +64,10 @@ class RegionExtractionRequest(AppBaseModel):
         return v.lower()
     
     @validator("image")
-    def validate_image(cls, v):
-        if not v or len(v) < 10:
+    def validate_image(cls, v, values):
+        if not v and not values.get("image_path"):
+            raise ValueError("Either image (base64) or image_path must be provided")
+        if v and len(v) < 10:
             raise ValueError("image must be a valid base64 encoded string")
         return v
 
@@ -112,7 +115,8 @@ class BatchRegionRequest(AppBaseModel):
     """Single region in a batch request."""
     
     region_id: str = Field(..., description="Unique identifier for this region")
-    image: str = Field(..., description="Base64 encoded cropped region image")
+    image: Optional[str] = Field(None, description="Base64 encoded cropped region image")
+    image_path: Optional[str] = Field(None, description="Local file path or URL to the image")
     region_type: str = Field(..., description="Type of region")
     prompt: Optional[str] = Field(None, description="Custom prompt override")
     

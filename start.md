@@ -5,13 +5,17 @@ These are the exact PowerShell commands used to start all services for local end
 ## 1. Post-processing Service
 
 ```powershell
-Set-Location "c:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\post-processing-service"; cmd /c "..\..\run_with_env.bat python main.py"
+Set-Location "c:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\post-processing-service";
+ ..\\..\\.venv\\Scripts\\pip install -r requirements.txt
+  cmd /c "..\..\run_with_env.bat python main.py"
 ```
 
 ## 2. Preprocessing Service
 
 ```powershell
-Set-Location "c:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\preprocessing-service"; cmd /c "..\..\run_with_env.bat python main.py"
+Set-Location "c:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\preprocessing-service";
+ ..\\..\\.venv\\Scripts\\pip install -r requirements.txt
+  cmd /c "..\..\run_with_env.bat python main.py"
 ```
 
 ## 3. GLM OCR Service

@@ -1,0 +1,4 @@
+# file: C:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\glm-ocr-service\app\glm_inference.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.9, 120, 256, 2000, 2048, ',', '.png', 'PNG', 'RGB', '\\s+', 'content', 'cpu', 'cuda', 'data:', 'image', 'input_ids', 'label', 'low-vram-retry', 'max_edge', 'max_tokens', 'normal', 'out of memory', 'primary', 'pt', 'role', 'text', 'token_type_ids', 'type', 'url', 'user']

@@ -146,12 +146,22 @@ def _inference_ready() -> bool:
     return inference_engine is not None and inference_engine.is_ready()
 
 
-def infer_page_bbox(image_base64: str) -> list[int]:
-    """Infer page bbox [x, y, w, h] from base64 image payload."""
+def infer_page_bbox(image_payload: str) -> list[int]:
+    """Infer page bbox [x, y, w, h] from base64 image payload or path."""
     try:
-        payload = image_base64.split(",", 1)[1] if image_base64.startswith("data:") else image_base64
-        image_bytes = base64.b64decode(payload)
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        from PIL import Image
+        import io
+        import base64
+        import os
+        
+        # If payload is a path
+        if len(image_payload) < 2000 and os.path.exists(image_payload):
+            image = Image.open(image_payload).convert("RGB")
+        else:
+            payload = image_payload.split(",", 1)[1] if image_payload.startswith("data:") else image_payload
+            image_bytes = base64.b64decode(payload)
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            
         return [0, 0, int(image.width), int(image.height)]
     except Exception:
         return [0, 0, 1000, 1000]
@@ -801,9 +811,12 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
         
         logger.info(f"Extracting region: type={request.region_type}, prompt={prompt[:50]}... [request_id={request_id}]")
         
+        # Choose image source payload
+        image_payload = request.image_path if request.image_path else request.image
+
         # Extract content
         content, confidence, prompt_tokens, completion_tokens = await _extract_with_timeout(
-            image_base64=request.image,
+            image_base64=image_payload,
             prompt=prompt,
             max_tokens=max_tokens,
             output_format=output_format
@@ -872,7 +885,7 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
         key_value_pairs = None
         bounding_boxes = None
 
-        page_bbox = infer_page_bbox(request.image)
+        page_bbox = infer_page_bbox(image_payload)
 
         if extraction_opts.include_coordinates:
             if extraction_opts.fast_mode:
@@ -1156,9 +1169,12 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
                 region.prompt
             )
             
+            # Choose image source payload
+            image_payload = region.image_path if region.image_path else region.image
+
             # Extract content
             content, confidence, prompt_tokens, completion_tokens = await _extract_with_timeout(
-                image_base64=region.image,
+                image_base64=image_payload,
                 prompt=prompt,
                 max_tokens=max_tokens,
                 output_format=output_format

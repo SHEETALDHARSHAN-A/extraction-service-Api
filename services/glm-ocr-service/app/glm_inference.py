@@ -321,15 +321,22 @@ class GLMInferenceEngine:
     
     def _decode_base64_image(self, image_base64: str) -> Image.Image:
         """
-        Decode base64 image string to PIL Image.
+        Decode base64 image string to PIL Image, or load directly from path.
         
         Args:
-            image_base64: Base64 encoded image (with or without data URI prefix)
+            image_base64: Base64 encoded image or local file path.
         
         Returns:
             PIL Image object
         """
         try:
+            # Check if it's a file path
+            import os
+            if len(image_base64) < 2000 and os.path.exists(image_base64):
+                import logging
+                logging.getLogger(__name__).info(f"Loading image from path directly: {image_base64}")
+                return Image.open(image_base64).convert("RGB")
+
             # Remove data URI prefix if present
             if image_base64.startswith("data:"):
                 image_base64 = image_base64.split(",", 1)[1]
@@ -344,7 +351,7 @@ class GLMInferenceEngine:
             
         except Exception as e:
             logger.error(f"Failed to decode image: {e}")
-            raise ValueError(f"Invalid base64 image: {e}")
+            raise ValueError(f"Invalid base64 image processing: {e}")
 
     def _resize_for_low_vram(self, image: Image.Image) -> Image.Image:
         """Downscale very large images to reduce GPU memory spikes during generation."""

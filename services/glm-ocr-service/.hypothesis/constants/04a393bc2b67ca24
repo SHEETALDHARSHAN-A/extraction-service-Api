@@ -1,0 +1,4 @@
+# file: C:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\glm-ocr-service\app\performance_monitor.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 0.95, 0.99, 1.0, 2.0, 100, 500, 1000, 1024, 2000, 5000, 30000, ', ', 'complexity_level', 'complexity_score', 'exceeded_by_ms', 'exceeded_by_percent', 'high', 'history_size', 'low', 'max_history_size', 'medium', 'page_number', 'page_size_bytes', 'page_size_kb', 'page_size_mb', 'processing_time_ms', 'request_id', 'slow_operations', 'slow_threshold_ms', 'threshold_ms', 'total_operations', 'very_high']

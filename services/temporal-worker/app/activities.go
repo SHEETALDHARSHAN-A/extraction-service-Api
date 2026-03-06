@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -496,21 +495,7 @@ func parseFloatOrDefault(raw string, fallback float64) float64 {
 	return fallback
 }
 
-// stringToUint8Tensor encodes a Go string as a UINT8 tensor for Triton.
-// This is a workaround for the Triton Python Backend 2.42.0 BYTES bug.
-func stringToUint8Tensor(name, value string) map[string]interface{} {
-	b := []byte(value)
-	data := make([]int, len(b))
-	for i, c := range b {
-		data[i] = int(c)
-	}
-	return map[string]interface{}{
-		"name":     name,
-		"shape":    []int{len(b)},
-		"datatype": "UINT8",
-		"data":     data,
-	}
-}
+// Removed stringToUint8Tensor
 
 // callTritonHTTP sends one image to Triton's HTTP inference endpoint and returns the
 // raw JSON result string plus the top-level confidence score.
@@ -521,25 +506,29 @@ func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, opti
 
 	tritonURL := fmt.Sprintf("http://%s:%s/v2/models/glm_ocr/infer", a.TritonHost, a.TritonHTTPPort)
 
-	// WORKAROUND: pass dynamic strings via request-level parameters to avoid
-	// Python backend IPC corruption for variable-length string tensors.
-	// Keep a minimal required input tensor for Triton request validation.
 	inputs := []map[string]interface{}{
-		stringToUint8Tensor("images", "x"),
-	}
-
-	params := map[string]interface{}{
-		"image_ref":    imagePath,
-		"prompt":       prompt,
-		"options_json": options,
-	}
-	if precisionMode != "" {
-		params["precision_mode"] = precisionMode
+		{
+			"name":     "images",
+			"shape":    []int{1, 1},
+			"datatype": "BYTES",
+			"data":     []string{imagePath},
+		},
+		{
+			"name":     "prompt",
+			"shape":    []int{1, 1},
+			"datatype": "BYTES",
+			"data":     []string{prompt},
+		},
+		{
+			"name":     "options",
+			"shape":    []int{1, 1},
+			"datatype": "BYTES",
+			"data":     []string{options},
+		},
 	}
 
 	payload := map[string]interface{}{
-		"inputs":     inputs,
-		"parameters": params,
+		"inputs": inputs,
 	}
 
 	bodyBytes, err := json.Marshal(payload)
@@ -581,23 +570,6 @@ func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, opti
 	for _, out := range inferResp.Outputs {
 		switch out.Name {
 		case "generated_text":
-			var bytesArr []int
-			if err := json.Unmarshal(out.Data, &bytesArr); err == nil && len(bytesArr) > 0 {
-				buf := make([]byte, len(bytesArr))
-				for i, v := range bytesArr {
-					if v < 0 {
-						v = 0
-					}
-					if v > 255 {
-						v = 255
-					}
-					buf[i] = byte(v)
-				}
-				generatedText = string(bytes.TrimRight(buf, "\x00"))
-				break
-			}
-
-			// Backward-compatible fallback if backend still returns TYPE_STRING
 			var arr []string
 			if err := json.Unmarshal(out.Data, &arr); err == nil && len(arr) > 0 {
 				generatedText = arr[0]
@@ -638,11 +610,6 @@ func (a *Activities) callGLMOCRHTTP(ctx context.Context, imagePath, prompt, opti
 		glmURL = "http://localhost:8002/extract-region"
 	}
 
-	imgBytes, err := os.ReadFile(imagePath)
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to read image for glm service: %w", err)
-	}
-
 	optionsMap := map[string]interface{}{}
 	if strings.TrimSpace(options) != "" {
 		if err := json.Unmarshal([]byte(options), &optionsMap); err != nil {
@@ -654,7 +621,7 @@ func (a *Activities) callGLMOCRHTTP(ctx context.Context, imagePath, prompt, opti
 	}
 
 	payload := map[string]interface{}{
-		"image":       base64.StdEncoding.EncodeToString(imgBytes),
+		"image_path":  imagePath,
 		"region_type": "text",
 		"prompt":      prompt,
 		"options":     optionsMap,
@@ -704,11 +671,6 @@ func (a *Activities) callGLMOCRGRPC(ctx context.Context, imagePath, prompt, opti
 		target = "localhost:50062"
 	}
 
-	imgBytes, err := os.ReadFile(imagePath)
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to read image for glm grpc service: %w", err)
-	}
-
 	optionsMap := map[string]interface{}{}
 	if strings.TrimSpace(options) != "" {
 		if err := json.Unmarshal([]byte(options), &optionsMap); err != nil {
@@ -723,7 +685,7 @@ func (a *Activities) callGLMOCRGRPC(ctx context.Context, imagePath, prompt, opti
 		"regions": []map[string]interface{}{
 			{
 				"region_id":   "region_0",
-				"image":       base64.StdEncoding.EncodeToString(imgBytes),
+				"image_path":  imagePath,
 				"region_type": "text",
 				"prompt":      prompt,
 			},

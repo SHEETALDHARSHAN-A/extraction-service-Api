@@ -538,28 +538,28 @@ func getBatchStatus(c *gin.Context) {
 		return
 	}
 
-	// Count by status (always from full batch, not filtered)
-	var allJobs []models.Job
-	if statusFilter != "" {
-		db.Where("batch_id = ?", batchID).Find(&allJobs)
-	} else {
-		allJobs = jobs
+	// Count by status using DB aggregation
+	type statusCount struct {
+		Status string
+		Count  int
 	}
+	var counts []statusCount
+	db.Model(&models.Job{}).Select("status, count(*) as count").Where("batch_id = ?", batchID).Group("status").Find(&counts)
 
 	completed, failed, processing, uploaded := 0, 0, 0, 0
-	for _, j := range allJobs {
-		switch j.Status {
+	for _, c := range counts {
+		switch models.JobStatus(c.Status) {
 		case models.StatusCompleted:
-			completed++
+			completed = c.Count
 		case models.StatusFailed:
-			failed++
+			failed = c.Count
 		case models.StatusProcessing:
-			processing++
+			processing = c.Count
 		default:
-			uploaded++
+			uploaded += c.Count
 		}
 	}
-	total := len(allJobs)
+	total := completed + failed + processing + uploaded
 	finished := completed + failed
 	progress := 0.0
 	if total > 0 {

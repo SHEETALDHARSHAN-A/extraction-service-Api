@@ -1,0 +1,4 @@
+# file: C:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\glm-ocr-service\app\config.py
+# hypothesis_version: 6.151.9
+
+[2048, 8002, 8192, '#', '%Y-%m-%dT%H:%M:%S', '.env', '0.0.0.0', '1.0.0', '1024', '120', '1400', '2048', '3', '512', '640', '896', '90', '; ', '=', 'CHUNK_LARGE_PAGES', 'CHUNK_OVERLAP_PX', 'CHUNK_SEGMENT_COUNT', 'CUDA_VISIBLE_DEVICES', 'GLM_MODEL_PATH', 'GLM_PRECISION_MODE', 'INFO', 'LOG_LEVEL', 'LOW_VRAM_MAX_TOKENS', 'LOW_VRAM_MODE', 'TRITON_MODEL_DIR', 'USE_TRITON_BACKEND', 'false', 'glm-ocr-service', 'high', 'ignore', 'true', 'utf-8', 'zai-org/GLM-OCR']

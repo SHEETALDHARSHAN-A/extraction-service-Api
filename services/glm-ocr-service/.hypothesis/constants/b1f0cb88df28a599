@@ -1,0 +1,4 @@
+# file: C:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\glm-ocr-service\app\prompts.py
+# hypothesis_version: 6.151.9
+
+['Formula Recognition:', 'Table Recognition:', 'Text Recognition:', 'caption', 'figure', 'footer', 'formula', 'header', 'table', 'text', 'title']

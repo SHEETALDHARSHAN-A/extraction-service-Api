@@ -269,31 +269,46 @@ func (q *RedisQueue) GetStatus(ctx context.Context, jobID string) (*QueuedJob, e
 	return &job, nil
 }
 
-// AcquireGPULock attempts to acquire exclusive GPU access
+// AcquireGPULock attempts to acquire a GPU slot (semaphore-style)
 func (q *RedisQueue) AcquireGPULock(ctx context.Context, jobID string, ttl time.Duration) (bool, error) {
-	// Try to set lock with NX (only if not exists)
-	success, err := q.client.SetNX(ctx, q.gpuLockKey, jobID, ttl).Result()
+	// Simple semaphore implementation using INCR
+	// Allow up to 5 concurrent jobs
+	maxConcurrent := int64(5)
+
+	count, err := q.client.Incr(ctx, q.gpuLockKey+"_count").Result()
 	if err != nil {
-		return false, fmt.Errorf("failed to acquire GPU lock: %w", err)
+		return false, fmt.Errorf("failed to increment GPU lock counter: %w", err)
 	}
 
-	return success, nil
+	if count > maxConcurrent {
+		// Too many jobs hold a slot, decrement and return false
+		q.client.Decr(ctx, q.gpuLockKey+"_count")
+		return false, nil
+	}
+
+	// Register this job as holding a slot
+	q.client.HSet(ctx, q.gpuLockKey+"_holders", jobID, time.Now().Unix())
+
+	// Set an expiration check on the count as a safety net if jobs crash
+	q.client.Expire(ctx, q.gpuLockKey+"_count", ttl)
+
+	return true, nil
 }
 
-// ReleaseGPULock releases the GPU lock
+// ReleaseGPULock releases the GPU lock slot
 func (q *RedisQueue) ReleaseGPULock(ctx context.Context, jobID string) error {
-	// Only delete if the lock is held by this job
-	script := `
-		if redis.call("get", KEYS[1]) == ARGV[1] then
-			return redis.call("del", KEYS[1])
-		else
-			return 0
-		end
-	`
-
-	err := q.client.Eval(ctx, script, []string{q.gpuLockKey}, jobID).Err()
+	// Check if this job holds a slot
+	exists, err := q.client.HExists(ctx, q.gpuLockKey+"_holders", jobID).Result()
 	if err != nil {
-		return fmt.Errorf("failed to release GPU lock: %w", err)
+		return fmt.Errorf("failed to check GPU lock ownership: %w", err)
+	}
+
+	if exists {
+		// Remove job from holders
+		q.client.HDel(ctx, q.gpuLockKey+"_holders", jobID)
+
+		// Decrement the counter
+		q.client.Decr(ctx, q.gpuLockKey+"_count")
 	}
 
 	return nil

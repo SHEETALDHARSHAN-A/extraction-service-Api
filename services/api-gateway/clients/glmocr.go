@@ -20,7 +20,8 @@ type GLMOCRClient struct {
 // RegionExtractionRequest represents a single region extraction request
 type RegionExtractionRequest struct {
 	RegionID   string                 `json:"region_id"`
-	Image      string                 `json:"image"`
+	Image      string                 `json:"image,omitempty"`
+	ImagePath  string                 `json:"image_path,omitempty"`
 	RegionType string                 `json:"region_type"`
 	Prompt     string                 `json:"prompt"`
 	Options    map[string]interface{} `json:"options,omitempty"`

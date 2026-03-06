@@ -1,0 +1,4 @@
+# file: C:\Users\MONISH RAJ T\OneDrive\Desktop\IDLE\services\glm-ocr-service\app\preprocessing_cache.py
+# hypothesis_version: 6.151.9
+
+[100, 500, 1024, 3600, 'entries', 'evictions', 'hit_rate_percent', 'hits', 'max_size_mb', 'misses', 'size_bytes', 'size_mb', 'ttl_seconds', 'utilization_percent']

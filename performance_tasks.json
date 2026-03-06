@@ -1,0 +1,64 @@
+[
+  {
+    "id": "PERF-01",
+    "title": "Optimize Batch Status DB Query",
+    "category": "Database Optimization",
+    "description": "Replace in-memory aggregation of batch status with a SQL GROUP BY query to prevent memory spikes and high Garbage Collection (GC) pressure when dealing with large document batches.",
+    "service": "api-gateway",
+    "difficulty": "Low",
+    "impact": "High",
+    "risk": "Low",
+    "steps": [
+      "Modify `getBatchStatus` in `services/api-gateway/main.go`.",
+      "Implement a GORM query using `.Select(\"status, count(*) as count\").Where(\"batch_id = ?\", batchID).Group(\"status\")` to retrieve grouped statistics.",
+      "Update the batch progress calculation to use the aggregated counts instead of instantiating and iterating over thousands of job models in memory.",
+      "Retain the fast path for retrieving specific paginated file statuses."
+    ]
+  },
+  {
+    "id": "PERF-02",
+    "title": "Eliminate Base64 Image Payloads in Workflow",
+    "category": "Data Transfer/Memory",
+    "description": "Images are currently base64 encoded and passed through Temporal workflows and internal HTTP/gRPC requests. This inflates data size by 33% and causes massive CPU/memory bottlenecks. Pass MinIO object paths directly to the ML services.",
+    "service": "temporal-worker, glm-ocr-service, paddleocr-service",
+    "difficulty": "Medium",
+    "impact": "High",
+    "risk": "Medium",
+    "steps": [
+      "Update the API Gateway and Temporal Worker (`app/activities.go`) to pass the `storage_path` (MinIO URI) to the ML services instead of reading files into memory and base64 encoding them.",
+      "Modify `glm-ocr-service/app/main.py` and `glm_inference.py` to accept `image_path` or `image_url` instead of `image` (base64 string).",
+      "Update the Python backend to resolve the MinIO URL or attached shared volume to read the raw bytes directly using `io.BytesIO` or `PIL.Image.open`.",
+      "Remove Base64 encoding/decoding overhead across the pipeline."
+    ]
+  },
+  {
+    "id": "PERF-03",
+    "title": "Remove Triton stringToUint8Tensor Workaround",
+    "category": "Serialization",
+    "description": "The `stringToUint8Tensor` function in the Temporal worker converts JSON strings into an array of integers as a workaround for a Triton bug. This causes enormous JSON payload bloat and serialization delays.",
+    "service": "temporal-worker, triton-models",
+    "difficulty": "Low",
+    "impact": "Medium",
+    "risk": "Low",
+    "steps": [
+      "Validate Triton Server and Python Backend version. Upgrade to version >= 24.x if necessary where BYTES handling is fixed.",
+      "Refactor `callTritonHTTP` in `temporal-worker/app/activities.go` to pass strings natively instead of casting characters to integers.",
+      "Ensure the corresponding Triton Python model handles the native BYTES tensor appropriately."
+    ]
+  },
+  {
+    "id": "PERF-04",
+    "title": "Refactor GPU Lock to Capacity Semaphore",
+    "category": "Concurrency",
+    "description": "The current `AcquireGPULock` acts as a strict global mutex (likely via Redis). This severely limits throughput by forcing GPUs to process jobs sequentially. Replace this with a token-bucket or capacity semaphore.",
+    "service": "temporal-worker, api-gateway",
+    "difficulty": "Medium",
+    "impact": "High",
+    "risk": "Medium",
+    "steps": [
+      "Analyze `QueueActivities.AcquireGPULock`.",
+      "Transform the mutex lock into a Redis-backed capacity semaphore that allows N concurrent jobs, bounded by total GPU VRAM and `max_parallel_regions`.",
+      "Allow Triton Inference Server's built-in dynamic batching to handle localized request queuing without forcing the Temporal orchestrator into an artificial wait loop."
+    ]
+  }
+]
