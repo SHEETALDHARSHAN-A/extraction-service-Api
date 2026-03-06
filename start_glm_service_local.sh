@@ -14,6 +14,7 @@ export SERVICE_HOST=0.0.0.0
 export SERVICE_PORT=8002
 export LOG_LEVEL=INFO
 export MAX_TOKENS_DEFAULT=2048
+export USE_ISOLATED_GPU_EXECUTOR=false
 
 echo ""
 echo "Starting service on http://localhost:8002"

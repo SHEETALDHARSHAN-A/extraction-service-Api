@@ -6,6 +6,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
+    && curl -Lo /bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.4.19/grpc_health_probe-linux-amd64 \
+    && chmod +x /bin/grpc_health_probe \
     && rm -rf /var/lib/apt/lists/*
 
 COPY services/post-processing-service/requirements.txt .

@@ -6,6 +6,7 @@ import logging
 import time
 import os
 import tempfile
+import re
 from typing import Dict, Any, Optional, Tuple
 from PIL import Image
 from .config import settings
@@ -220,7 +221,7 @@ class GLMInferenceEngine:
             completion_total += c_tokens
             conf_total += confidence
 
-        merged = "\n\n".join(contents)
+        merged = self._merge_chunk_contents(contents)
         avg_conf = conf_total / float(len(segments)) if segments else 0.0
         return merged, avg_conf, prompt_total, completion_total
 
@@ -242,6 +243,35 @@ class GLMInferenceEngine:
         if not segments:
             segments.append(image)
         return segments
+
+    def _merge_chunk_contents(self, chunk_texts: list[str]) -> str:
+        """Merge chunk OCR outputs and de-duplicate overlap lines."""
+        merged_lines: list[str] = []
+        seen_recent: set[str] = set()
+        recent_window: list[str] = []
+
+        for text in chunk_texts:
+            for line in text.splitlines():
+                raw = line.strip()
+                if not raw:
+                    continue
+
+                # Normalize minor whitespace noise for overlap de-duplication.
+                norm = re.sub(r"\s+", " ", raw).lower()
+                if norm in seen_recent:
+                    continue
+
+                merged_lines.append(raw)
+                recent_window.append(norm)
+                seen_recent.add(norm)
+
+                # Keep only a bounded recent set so repeated headers far apart can remain.
+                if len(recent_window) > 120:
+                    dropped = recent_window.pop(0)
+                    if dropped not in recent_window:
+                        seen_recent.discard(dropped)
+
+        return "\n".join(merged_lines)
 
     def _build_model_inputs(self, image: Image.Image, prompt: str):
         """Prepare chat-template inputs for GLM-OCR from image and prompt."""

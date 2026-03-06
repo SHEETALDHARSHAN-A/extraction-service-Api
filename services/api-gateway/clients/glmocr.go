@@ -1,12 +1,10 @@
 package clients
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -45,7 +43,7 @@ type RegionExtractionResult struct {
 
 // BatchRegionExtractionResponse represents the response from batch extraction
 type BatchRegionExtractionResponse struct {
-	Results              []RegionExtractionResult `json:"results"`
+	Results               []RegionExtractionResult `json:"results"`
 	TotalProcessingTimeMs float64                  `json:"total_processing_time_ms"`
 }
 
@@ -85,8 +83,16 @@ func (c *GLMOCRClient) ExtractRegionsBatch(ctx context.Context, regions []Region
 			}
 		}
 
+		startedAt := time.Now()
 		response, err := c.makeRequest(ctx, request)
 		if err == nil {
+			if response.TotalProcessingTimeMs <= 0 {
+				elapsedMs := time.Since(startedAt).Milliseconds()
+				if elapsedMs <= 0 {
+					elapsedMs = 1
+				}
+				response.TotalProcessingTimeMs = float64(elapsedMs)
+			}
 			c.circuitBreaker.RecordSuccess()
 			return response, nil
 		}
@@ -102,7 +108,7 @@ func (c *GLMOCRClient) ExtractRegionsBatch(ctx context.Context, regions []Region
 func (c *GLMOCRClient) ExtractRegionsParallel(ctx context.Context, regions []RegionExtractionRequest, options map[string]interface{}, maxParallel int) (*BatchRegionExtractionResponse, error) {
 	if len(regions) == 0 {
 		return &BatchRegionExtractionResponse{
-			Results:              []RegionExtractionResult{},
+			Results:               []RegionExtractionResult{},
 			TotalProcessingTimeMs: 0,
 		}, nil
 	}
@@ -159,43 +165,26 @@ func (c *GLMOCRClient) ExtractRegionsParallel(ctx context.Context, regions []Reg
 	totalTime := time.Since(startTime).Milliseconds()
 
 	return &BatchRegionExtractionResponse{
-		Results:              allResults,
+		Results:               allResults,
 		TotalProcessingTimeMs: float64(totalTime),
 	}, nil
 }
 
 // makeRequest performs the actual HTTP request
 func (c *GLMOCRClient) makeRequest(ctx context.Context, request BatchRegionExtractionRequest) (*BatchRegionExtractionResponse, error) {
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/extract-regions-batch", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GLM-OCR service returned status %d: %s", resp.StatusCode, string(body))
+	if target, ok := parseGRPCTarget(c.baseURL); ok {
+		var response BatchRegionExtractionResponse
+		err := invokeJSONGRPC(ctx, target, "/glmocr.GLMOCRService/ExtractRegionsBatch", request, &response)
+		if err != nil {
+			return nil, err
+		}
+		return &response, nil
 	}
 
 	var response BatchRegionExtractionResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	err := doJSONRequest(ctx, c.httpClient, http.MethodPost, c.baseURL+"/extract-regions-batch", "GLM-OCR service", request, &response)
+	if err != nil {
+		return nil, err
 	}
 
 	return &response, nil
@@ -203,6 +192,17 @@ func (c *GLMOCRClient) makeRequest(ctx context.Context, request BatchRegionExtra
 
 // HealthCheck checks if the GLM-OCR service is healthy
 func (c *GLMOCRClient) HealthCheck(ctx context.Context) error {
+	if target, ok := parseGRPCTarget(c.baseURL); ok {
+		if target == "" {
+			return fmt.Errorf("invalid grpc target for GLM-OCR")
+		}
+		return nil
+	}
+
+	if strings.TrimSpace(c.baseURL) == "" {
+		return fmt.Errorf("empty GLM-OCR base URL")
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/health", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create health check request: %w", err)

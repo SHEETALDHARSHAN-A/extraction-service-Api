@@ -6,10 +6,17 @@ import uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from concurrent.futures import ThreadPoolExecutor
 
 
 jobs: Dict[str, Dict[str, Any]] = {}
 jobs_lock = Lock()
+
+# Replace daemon threads with a managed thread pool
+executor = ThreadPoolExecutor(max_workers=10)
+
+import os
+
 
 app = FastAPI(
     title="Intelligent Document Extraction Platform (IDEP) API",
@@ -18,12 +25,24 @@ app = FastAPI(
 )
 
 # CORS Middleware
+allowed_origins_env = os.environ.get("CORS_ALLOWED_ORIGINS", "")
+if allowed_origins_env:
+    allow_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+else:
+    # Fallback to empty list instead of "*" for security, but allow local dev testing
+    allow_origins = ["http://localhost:3000", "http://localhost:8000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=allow_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+@app.on_event("shutdown")
+def shutdown_event():
+    executor.shutdown(wait=True)
 
 @app.get("/health")
 async def health_check():
@@ -107,12 +126,14 @@ async def upload_document(file: UploadFile = File(...)):
             "error": None,
         }
 
-    worker = Thread(
-        target=_process_job,
-        args=(job_id, file.filename, file.content_type or "application/octet-stream", file_bytes),
-        daemon=True,
+    # Submit to thread pool instead of creating a bare Thread
+    executor.submit(
+        _process_job,
+        job_id,
+        file.filename,
+        file.content_type or "application/octet-stream",
+        file_bytes,
     )
-    worker.start()
 
     return {
         "job_id": job_id,

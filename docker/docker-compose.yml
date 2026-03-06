@@ -10,27 +10,27 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/idep
-      - REDIS_URL=redis://redis:6379/0
-      - TEMPORAL_HOST=temporal:7233
-      - TEMPORAL_NAMESPACE=default
-      - TEMPORAL_TASK_QUEUE=document-processing-task-queue
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
-      - MINIO_BUCKET=idep-documents
-      - JWT_SECRET=idep-dev-secret-change-in-production
-      - API_KEYS=dev-key-123:admin,test-key-456:operator
-      - API_PORT=8000
-      - PADDLEOCR_SERVICE_URL=http://paddleocr-service:8001
-      - GLM_OCR_SERVICE_URL=http://glm-ocr-service:8002
-      - ENABLE_LAYOUT_DETECTION=true
-      - CACHE_LAYOUT_RESULTS=true
-      - LAYOUT_CACHE_TTL_SECONDS=3600
-      - MAX_PARALLEL_REGIONS=5
-      - SERVICE_TIMEOUT_SECONDS=30
-      - CIRCUIT_BREAKER_THRESHOLD=5
-      - CIRCUIT_BREAKER_TIMEOUT_SECONDS=60
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/idep}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - TEMPORAL_HOST=${TEMPORAL_HOST:-temporal:7233}
+      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
+      - TEMPORAL_TASK_QUEUE=${TEMPORAL_TASK_QUEUE:-document-processing-task-queue}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET=${MINIO_BUCKET:-idep-documents}
+      - JWT_SECRET=${JWT_SECRET:-idep-dev-secret-change-in-production}
+      - API_KEYS=${IDEP_API_KEYS:-tp-proj-dev-key-123:admin,tp-test-sandbox-456:viewer}
+      - API_PORT=${API_PORT:-8000}
+      - PADDLEOCR_SERVICE_URL=${PADDLEOCR_SERVICE_URL:-grpc://paddleocr-service:50061}
+      - GLM_OCR_SERVICE_URL=${GLM_OCR_SERVICE_URL:-grpc://glm-ocr-service:50062}
+      - ENABLE_LAYOUT_DETECTION=${ENABLE_LAYOUT_DETECTION:-true}
+      - CACHE_LAYOUT_RESULTS=${CACHE_LAYOUT_RESULTS:-true}
+      - LAYOUT_CACHE_TTL_SECONDS=${LAYOUT_CACHE_TTL_SECONDS:-3600}
+      - MAX_PARALLEL_REGIONS=${MAX_PARALLEL_REGIONS:-5}
+      - SERVICE_TIMEOUT_SECONDS=${SERVICE_TIMEOUT_SECONDS:-30}
+      - CIRCUIT_BREAKER_THRESHOLD=${CIRCUIT_BREAKER_THRESHOLD:-5}
+      - CIRCUIT_BREAKER_TIMEOUT_SECONDS=${CIRCUIT_BREAKER_TIMEOUT_SECONDS:-60}
     depends_on:
       db:
         condition: service_started
@@ -59,20 +59,20 @@ services:
       context: ..
       dockerfile: services/temporal-worker/Dockerfile
     environment:
-      - TEMPORAL_HOST=temporal:7233
-      - TEMPORAL_NAMESPACE=default
-      - TEMPORAL_TASK_QUEUE=document-processing-task-queue
-      - INFERENCE_BACKEND=triton
-      - GLM_OCR_SERVICE_URL=http://glm-ocr-service:8002
-      - TRITON_HOST=triton
-      - TRITON_GRPC_PORT=8001
-      - TRITON_HTTP_PORT=8000
-      - PREPROCESSING_HOST=preprocessing-service:50051
-      - POSTPROCESSING_HOST=postprocessing-service:50052
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
-      - MINIO_BUCKET=idep-documents
+      - TEMPORAL_HOST=${TEMPORAL_HOST:-temporal:7233}
+      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
+      - TEMPORAL_TASK_QUEUE=${TEMPORAL_TASK_QUEUE:-document-processing-task-queue}
+      - INFERENCE_BACKEND=${INFERENCE_BACKEND:-triton}
+      - GLM_OCR_SERVICE_URL=${GLM_OCR_SERVICE_URL:-grpc://glm-ocr-service:50062}
+      - TRITON_HOST=${TRITON_HOST:-triton}
+      - TRITON_GRPC_PORT=${TRITON_GRPC_PORT:-8001}
+      - TRITON_HTTP_PORT=${TRITON_HTTP_PORT:-8000}
+      - PREPROCESSING_HOST=${PREPROCESSING_HOST:-preprocessing-service:50051}
+      - POSTPROCESSING_HOST=${POSTPROCESSING_HOST:-postprocessing-service:50052}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET=${MINIO_BUCKET:-idep-documents}
     volumes:
       - idep_tmp:/tmp/idep
     depends_on:
@@ -81,9 +81,9 @@ services:
       triton:
         condition: service_healthy
       preprocessing-service:
-        condition: service_started
+        condition: service_healthy
       postprocessing-service:
-        condition: service_started
+        condition: service_healthy
       minio:
         condition: service_started
     restart: on-failure
@@ -98,6 +98,11 @@ services:
       - "50051:50051"
     volumes:
       - idep_tmp:/tmp/idep
+    healthcheck:
+      test: [ "CMD", "grpc_health_probe", "-addr=:50051" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: on-failure
 
   # ═══════════════════════════════════════════
@@ -110,6 +115,7 @@ services:
       dockerfile: services/paddleocr-service/Dockerfile
     ports:
       - "8003:8001"
+      - "50061:50061"
     environment:
       - PADDLEOCR_MODEL_DIR=/app/models
       - PADDLEOCR_USE_GPU=false
@@ -119,6 +125,7 @@ services:
       - MIN_CONFIDENCE_DEFAULT=0.5
       - MAX_IMAGE_SIZE_MB=10
       - REQUEST_TIMEOUT_SECONDS=30
+      - GRPC_PORT=50061
     volumes:
       - paddleocr_models:/app/models
     healthcheck:
@@ -143,6 +150,7 @@ services:
       dockerfile: services/glm-ocr-service/Dockerfile
     ports:
       - "8002:8002"
+      - "50062:50062"
     environment:
       - GLM_MODEL_PATH=zai-org/GLM-OCR
       - GLM_PRECISION_MODE=normal
@@ -154,6 +162,7 @@ services:
       - LOG_LEVEL=INFO
       - MAX_TOKENS_DEFAULT=2048
       - REQUEST_TIMEOUT_SECONDS=60
+      - GRPC_PORT=50062
     volumes:
       - glm_models:/opt/models
     healthcheck:
@@ -185,6 +194,11 @@ services:
       - PORT=50052
     ports:
       - "50052:50052"
+    healthcheck:
+      test: [ "CMD", "grpc_health_probe", "-addr=:50052" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: on-failure
 
   # Triton with NVIDIA GPU (RTX 2050)
@@ -198,7 +212,7 @@ services:
       - "18002:8002" # Metrics
     environment:
       - IDEP_STRICT_REAL=true
-      - GLM_MODEL_PATH=zai-org/GLM-OCR
+      - GLM_MODEL_PATH=${GLM_MODEL_PATH:-zai-org/GLM-OCR}
       - HF_HOME=/opt/hf-cache
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
     volumes:
@@ -216,11 +230,11 @@ services:
           --backend-config=python,stub-timeout-seconds=600 \
           --backend-config=python,stub-health-check-interval-seconds=30
     healthcheck:
-      test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v2/health/ready', timeout=3)" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/v2/health/ready" ]
       interval: 10s
       timeout: 5s
-      retries: 60
-      start_period: 300s
+      retries: 30
+      start_period: 120s
     deploy:
       resources:
         reservations:
@@ -243,8 +257,8 @@ services:
     environment:
       - DB=postgresql
       - DB_PORT=5432
-      - POSTGRES_USER=postgres
-      - POSTGRES_PWD=postgres
+      - POSTGRES_USER=${DATABASE_USER:-postgres}
+      - POSTGRES_PWD=${DATABASE_PASSWORD:-postgres}
       - POSTGRES_SEEDS=db
     depends_on:
       db:
@@ -268,15 +282,15 @@ services:
   db:
     image: postgres:16
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=idep
+      - POSTGRES_USER=${DATABASE_USER:-postgres}
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD:-postgres}
+      - POSTGRES_DB=${DATABASE_NAME:-idep}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -318,8 +332,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -359,8 +373,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=idep-admin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-idep-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana

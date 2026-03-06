@@ -1,0 +1,21 @@
+services:
+  api-gateway:
+    environment:
+      - PADDLEOCR_SERVICE_URL=${PADDLEOCR_SERVICE_URL:-grpc://paddleocr-service:50061}
+      - GLM_OCR_SERVICE_URL=${GLM_OCR_SERVICE_URL:-grpc://glm-ocr-service:50062}
+
+  temporal-worker:
+    environment:
+      - GLM_OCR_SERVICE_URL=${GLM_OCR_SERVICE_URL:-grpc://glm-ocr-service:50062}
+
+  paddleocr-service:
+    ports:
+      - "50061:50061"
+    environment:
+      - GRPC_PORT=50061
+
+  glm-ocr-service:
+    ports:
+      - "50062:50062"
+    environment:
+      - GRPC_PORT=50062

@@ -1,19 +1,18 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
+	"github.com/opentracing/opentracing-go"
 	"github.com/redis/go-redis/v9"
 	"github.com/user/idep/api-gateway/cache"
 	"github.com/user/idep/api-gateway/clients"
@@ -27,6 +26,9 @@ import (
 	"github.com/user/idep/api-gateway/tracing"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -41,6 +43,8 @@ var (
 	paddleOCRClient *clients.PaddleOCRClient
 	glmOCRClient    *clients.GLMOCRClient
 	docOrchestrator *orchestrator.Orchestrator
+	healthService   *HealthService
+	documentService *DocumentService
 )
 
 func main() {
@@ -57,9 +61,9 @@ func main() {
 		log.Printf("⚠️ Failed to initialize Jaeger tracer (non-fatal): %v", err)
 	} else {
 		defer closer.Close()
-		log.Println("✅ Jaeger tracer initialized")
+		opentracing.SetGlobalTracer(tracer)
+		log.Println("✅ Jaeger tracer initialized and set globally")
 	}
-	_ = tracer // Tracer is set globally
 
 	// --- Initialize Database ---
 	switch strings.ToLower(cfg.DatabaseDriver) {
@@ -121,14 +125,19 @@ func main() {
 	}
 	redisClient := redis.NewClient(redisOpts)
 	if _, pingErr := redisClient.Ping(context.Background()).Result(); pingErr != nil {
-		log.Printf("⚠️ Redis queue unavailable (non-fatal): %v", pingErr)
+		log.Printf("⚠️ Redis queue and rate limiting unavailable (non-fatal): %v", pingErr)
+		middleware.InitRateLimiter(nil) // Use local memory fallback
 	} else {
 		requestQueue = queue.NewRedisQueue(redisClient)
-		log.Println("✅ Redis request queue initialized")
+		middleware.InitRateLimiter(redisClient) // Use Redis for rate limiting
+		log.Println("✅ Redis request queue and rate limiter initialized")
 	}
 
 	// Start queue metrics emission goroutine only if queue is initialized
 	if requestQueue != nil {
+		// Start background job to submit queued jobs to Temporal
+		go startTemporalSubmitter()
+
 		go func() {
 			ticker := time.NewTicker(30 * time.Second) // Emit metrics every 30 seconds
 			defer ticker.Stop()
@@ -141,7 +150,7 @@ func main() {
 				}
 
 				// Log queue metrics with structured logging
-				log.Printf(`{"timestamp":"%s","level":"INFO","service":"idep-api-gateway","message":"Queue metrics","context":{"queue_length":%d,"processing_count":%d,"avg_wait_time_seconds":%.2f,"avg_processing_time_seconds":%.2f,"throughput_per_hour":%.2f}}`,
+				log.Printf(`{"timestamp":"%s","level":"INFO","service":"idep-api-gateway","message":"Queue metrics","context":{"queue_length":%d,"processing_count":%d,"avg_wait_time_seconds":%.2f,"avg_processing_time_seconds":%.2f}}`,
 					metrics.Timestamp,
 					metrics.QueueLength,
 					metrics.ProcessingCount,
@@ -185,10 +194,29 @@ func main() {
 	)
 	log.Println("✅ Document orchestrator initialized")
 
+	healthService = &HealthService{
+		DB:      db,
+		Cache:   redisCache,
+		Queue:   requestQueue,
+		GLMURL:  cfg.GLMOCRServiceURL,
+		Service: "idep-api-gateway",
+	}
+
+	documentService = &DocumentService{
+		DB:          db,
+		Storage:     storageClient,
+		Cache:       redisCache,
+		Queue:       requestQueue,
+		Temporal:    temporalClient,
+		TaskQueue:   cfg.TemporalTaskQueue,
+		UploadLimit: cfg.UploadMaxDocumentSizeBytes,
+	}
+
 	// --- Gin Router ---
 	r := gin.Default()
 
 	// Global middleware
+	r.Use(RequestIDMiddleware())
 	r.Use(middleware.TracingMiddleware())
 	r.Use(middleware.PrometheusMiddleware())
 	r.Use(middleware.RateLimit())
@@ -215,6 +243,7 @@ func main() {
 		// Platform
 		api.GET("/admin/stats", getSystemStats)
 		api.GET("/admin/cache", getCacheStats)
+		api.POST("/admin/reload-keys", reloadKeys)
 	}
 
 	log.Printf("🚀 API Gateway starting on :%s", cfg.Port)
@@ -230,105 +259,82 @@ func batchHandler() *handlers.BatchUploadHandler {
 	}
 }
 
-// --- Handlers ---
+// --- Handlers & Middleware ---
+
+func RequestIDMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		reqID := c.GetHeader("X-Request-ID")
+		if reqID == "" {
+			reqID = uuid.New().String()
+		}
+		c.Set("RequestID", reqID)
+		c.Header("X-Request-ID", reqID)
+
+		// Also add it to passing context for traced spans/logger context if needed
+		ctx := context.WithValue(c.Request.Context(), "request_id", reqID)
+		c.Request = c.Request.WithContext(ctx)
+
+		c.Next()
+	}
+}
+
+func reloadKeys(c *gin.Context) {
+	middleware.ReloadAPIKeys()
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "API keys reloaded successfully from environment",
+	})
+}
 
 func healthCheck(c *gin.Context) {
-	ctx := c.Request.Context()
-	components := make(map[string]interface{})
-	overallStatus := "healthy"
-
-	// Check Triton (via GLM-OCR service health endpoint)
-	tritonStatus := checkServiceHealth(cfg.GLMOCRServiceURL + "/health")
-	components["triton"] = tritonStatus
-	if status, ok := tritonStatus["status"].(string); !ok || status != "healthy" {
-		overallStatus = "degraded"
-	}
-
-	// Check GLM-OCR service
-	glmOCRStatus := checkServiceHealth(cfg.GLMOCRServiceURL + "/health")
-	components["glm_ocr_service"] = glmOCRStatus
-	if status, ok := glmOCRStatus["status"].(string); !ok || status != "healthy" {
-		overallStatus = "degraded"
-	}
-
-	// Check Redis queue
-	if requestQueue != nil {
-		queueLength, err := requestQueue.GetQueueLength(ctx)
-		estimatedWait, _ := requestQueue.GetEstimatedWaitTime(ctx)
-
-		queueStatus := gin.H{
-			"status": "healthy",
-		}
-
-		if err != nil {
-			queueStatus["status"] = "unhealthy"
-			queueStatus["error"] = err.Error()
-			overallStatus = "degraded"
-		} else {
-			queueStatus["queue_length"] = queueLength
-			queueStatus["estimated_wait_time_seconds"] = int(estimatedWait.Seconds())
-		}
-
-		components["request_queue"] = queueStatus
-	} else {
-		components["request_queue"] = gin.H{
-			"status": "unavailable",
-		}
-		overallStatus = "degraded"
-	}
-
-	// Check database
-	sqlDB, err := db.DB()
-	dbStatus := gin.H{
-		"status": "healthy",
-	}
-	if err != nil || sqlDB.Ping() != nil {
-		dbStatus["status"] = "unhealthy"
-		if err != nil {
-			dbStatus["error"] = err.Error()
-		}
-		overallStatus = "unhealthy"
-	} else {
-		stats := sqlDB.Stats()
-		dbStatus["connection_pool_available"] = stats.MaxOpenConnections - stats.InUse
-	}
-	components["database"] = dbStatus
-
-	// Check Redis cache
-	if redisCache != nil {
-		redisStatus := gin.H{
-			"status": "healthy",
-		}
-		// Try a simple ping
-		stats := redisCache.GetCacheStats(ctx)
-		if stats == nil {
-			redisStatus["status"] = "unhealthy"
-			overallStatus = "degraded"
-		}
-		components["redis"] = redisStatus
-	} else {
-		components["redis"] = gin.H{
-			"status": "unavailable",
-		}
-	}
-
-	statusCode := http.StatusOK
-	if overallStatus == "unhealthy" {
-		statusCode = http.StatusServiceUnavailable
-	} else if overallStatus == "degraded" {
-		statusCode = http.StatusOK // Still return 200 for degraded
-	}
-
-	c.JSON(statusCode, gin.H{
-		"status":     overallStatus,
-		"timestamp":  time.Now().Format(time.RFC3339),
-		"service":    "idep-api-gateway",
-		"components": components,
-	})
+	healthService.Check(c)
 }
 
 // checkServiceHealth performs a simple HTTP GET to a service health endpoint
 func checkServiceHealth(url string) gin.H {
+	if strings.HasPrefix(strings.ToLower(url), "grpc://") {
+		target := strings.TrimPrefix(url, "grpc://")
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return gin.H{
+				"status":            "unhealthy",
+				"error":             err.Error(),
+				"last_health_check": time.Now().Format(time.RFC3339),
+			}
+		}
+		defer conn.Close()
+
+		healthClient := grpc_health_v1.NewHealthClient(conn)
+		healthResp, err := healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{})
+		if err != nil {
+			return gin.H{
+				"status":            "unhealthy",
+				"transport":         "grpc",
+				"error":             err.Error(),
+				"last_health_check": time.Now().Format(time.RFC3339),
+			}
+		}
+
+		if healthResp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+			return gin.H{
+				"status":            "unhealthy",
+				"transport":         "grpc",
+				"health_status":     healthResp.GetStatus().String(),
+				"last_health_check": time.Now().Format(time.RFC3339),
+			}
+		}
+
+		return gin.H{
+			"status":            "healthy",
+			"transport":         "grpc",
+			"health_status":     healthResp.GetStatus().String(),
+			"last_health_check": time.Now().Format(time.RFC3339),
+		}
+	}
+
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
@@ -359,334 +365,7 @@ func checkServiceHealth(url string) gin.H {
 }
 
 func uploadDocument(c *gin.Context) {
-	file, header, err := c.Request.FormFile("document")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No document provided"})
-		return
-	}
-	defer file.Close()
-
-	// Document size validation - max 10MB
-	const maxDocumentSize = 10 * 1024 * 1024 // 10MB in bytes
-	if header.Size > maxDocumentSize {
-		maxSizeMB := float64(maxDocumentSize) / (1024 * 1024)
-		providedSizeMB := float64(header.Size) / (1024 * 1024)
-
-		log.Printf("❌ Document too large: %s (%.2fMB) exceeds maximum of %.2fMB",
-			header.Filename, providedSizeMB, maxSizeMB)
-
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
-			"error":            "Document too large",
-			"max_size_mb":      maxSizeMB,
-			"provided_size_mb": providedSizeMB,
-			"message":          fmt.Sprintf("Document size (%.2fMB) exceeds maximum allowed size of %.2fMB", providedSizeMB, maxSizeMB),
-		})
-		return
-	}
-
-	// --- Cache Dedup: Hash content to detect duplicates ---
-	var buf bytes.Buffer
-	tee := io.TeeReader(file, &buf) // Read into buf while hashing
-	contentHash, _ := cache.HashContent(tee)
-
-	if redisCache != nil && contentHash != "" {
-		if existingJobID, found := redisCache.CheckDuplicate(context.Background(), contentHash); found {
-			var existingJob models.Job
-			if db.First(&existingJob, "id = ?", existingJobID).Error == nil {
-				// Only return cached result for COMPLETED or PROCESSING jobs.
-				// If the previous job FAILED, evict the cache entry and allow
-				// the document to be re-submitted for processing.
-				if existingJob.Status == models.StatusFailed {
-					log.Printf("♻️ Cache hit for FAILED job %s – evicting, will reprocess %s",
-						existingJobID, header.Filename)
-					redisCache.Evict(context.Background(), contentHash)
-				} else {
-					log.Printf("♻️ Cache hit: %s → existing job %s (status=%s)",
-						header.Filename, existingJobID, existingJob.Status)
-					c.JSON(http.StatusOK, gin.H{
-						"job_id":   existingJobID,
-						"filename": header.Filename,
-						"status":   existingJob.Status,
-						"cached":   true,
-						"message":  "Identical document already processed",
-					})
-					return
-				}
-			}
-		}
-	}
-
-	jobID := uuid.New().String()
-	objectName := fmt.Sprintf("raw/%s/%s", jobID, header.Filename)
-
-	// Upload from buffer (already read for hashing)
-	reader := io.NopCloser(&buf)
-	storagePath, err := storageClient.UploadFile(
-		context.Background(), objectName, reader, header.Size,
-		header.Header.Get("Content-Type"),
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload document"})
-		log.Printf("Upload error: %v", err)
-		return
-	}
-
-	// Store content hash → job ID mapping in cache
-	if redisCache != nil && contentHash != "" {
-		redisCache.MarkProcessed(context.Background(), contentHash, jobID)
-	}
-
-	// --- Output Formats & Options ---
-	outputFormats := c.DefaultPostForm("output_formats", "text")
-	customPrompt := c.DefaultPostForm("prompt", "")
-	includeCoordinates := c.DefaultPostForm("include_coordinates", "false") == "true"
-	fastMode := c.DefaultPostForm("fast_mode", "false") == "true"
-	includeWordConfidence := c.DefaultPostForm("include_word_confidence", "false") == "true"
-	includeLineConfidence := c.DefaultPostForm("include_line_confidence", "false") == "true"
-	includePageLayout := c.DefaultPostForm("include_page_layout", "false") == "true"
-	language := c.DefaultPostForm("language", "auto")
-	granularity := c.DefaultPostForm("granularity", "block")
-	redactPII := c.DefaultPostForm("redact_pii", "false") == "true"
-	enhance := c.DefaultPostForm("enhance", "true") == "true"
-	deskew := c.DefaultPostForm("deskew", "true") == "true"
-	maxPages := c.DefaultPostForm("max_pages", "0")
-	temperature := c.DefaultPostForm("temperature", "0.0")
-	maxTokens := c.DefaultPostForm("max_tokens", "4096")
-	precisionMode := c.DefaultPostForm("precision_mode", "high")
-	extractFieldsRaw := strings.TrimSpace(c.DefaultPostForm("extract_fields", ""))
-
-	// Layout detection options
-	enableLayoutDetection := c.DefaultPostForm("enable_layout_detection", "false") == "true"
-	minConfidence := c.DefaultPostForm("min_confidence", "0.5")
-	detectTables := c.DefaultPostForm("detect_tables", "true") == "true"
-	detectFormulas := c.DefaultPostForm("detect_formulas", "true") == "true"
-	parallelRegionProcessing := c.DefaultPostForm("parallel_region_processing", "true") == "true"
-	maxParallelRegions := c.DefaultPostForm("max_parallel_regions", "5")
-	cacheLayoutResults := c.DefaultPostForm("cache_layout_results", "true") == "true"
-
-	extractFields := []string{}
-	if extractFieldsRaw != "" {
-		for _, f := range strings.Split(extractFieldsRaw, ",") {
-			f = strings.TrimSpace(f)
-			if f != "" {
-				extractFields = append(extractFields, f)
-			}
-		}
-	}
-
-	// Validate formats (skip if custom prompt provided)
-	if customPrompt == "" {
-		validFormats := map[string]bool{
-			"text": true, "json": true, "markdown": true,
-			"table": true, "key_value": true, "structured": true,
-		}
-		for _, f := range strings.Split(outputFormats, ",") {
-			f = strings.TrimSpace(f)
-			if f != "" && !validFormats[f] {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"error":         fmt.Sprintf("Invalid output format: '%s'", f),
-					"valid_formats": []string{"text", "json", "markdown", "table", "key_value", "structured"},
-					"usage":         "Comma-separated, e.g. 'text,table,json'. Or use 'prompt' for custom instructions.",
-				})
-				return
-			}
-		}
-	}
-
-	job := models.Job{
-		ID:            jobID,
-		Filename:      header.Filename,
-		FileSize:      header.Size,
-		ContentType:   header.Header.Get("Content-Type"),
-		StoragePath:   storagePath,
-		Status:        models.StatusUploaded,
-		OutputFormats: outputFormats,
-	}
-	if err := db.Create(&job).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job record"})
-		return
-	}
-	middleware.RecordJobCreated()
-
-	// --- Enqueue job to Redis queue ---
-	queuedJob := &queue.QueuedJob{
-		JobID:        jobID,
-		Priority:     0, // Default priority (normal)
-		EnqueuedAt:   time.Now(),
-		DocumentSize: header.Size,
-		Options: map[string]interface{}{
-			"prompt":                     customPrompt,
-			"fast_mode":                  fastMode,
-			"include_coordinates":        includeCoordinates,
-			"include_word_confidence":    includeWordConfidence,
-			"include_line_confidence":    includeLineConfidence,
-			"include_page_layout":        includePageLayout,
-			"language":                   language,
-			"granularity":                granularity,
-			"redact_pii":                 redactPII,
-			"enhance":                    enhance,
-			"deskew":                     deskew,
-			"max_pages":                  maxPages,
-			"temperature":                temperature,
-			"max_tokens":                 maxTokens,
-			"precision_mode":             precisionMode,
-			"extract_fields":             extractFields,
-			"enable_layout_detection":    enableLayoutDetection,
-			"parallel_region_processing": parallelRegionProcessing,
-			"layout_detection_options": map[string]interface{}{
-				"min_confidence":       minConfidence,
-				"detect_tables":        detectTables,
-				"detect_formulas":      detectFormulas,
-				"max_parallel_regions": maxParallelRegions,
-				"cache_layout_results": cacheLayoutResults,
-			},
-		},
-	}
-
-	var queueLength int64
-	var estimatedWait time.Duration
-
-	if requestQueue != nil {
-		if err := requestQueue.Enqueue(c.Request.Context(), queuedJob); err != nil {
-			// Queue is full - return HTTP 429 with retry-after header
-			estimatedWait, _ = requestQueue.GetEstimatedWaitTime(c.Request.Context())
-			retryAfterSeconds := int(estimatedWait.Seconds())
-			if retryAfterSeconds < 60 {
-				retryAfterSeconds = 60 // Minimum 1 minute retry
-			}
-
-			c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSeconds))
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":                       "Queue is full, please retry later",
-				"retry_after_seconds":         retryAfterSeconds,
-				"estimated_wait_time_seconds": int(estimatedWait.Seconds()),
-			})
-
-			// Clean up the job record since we couldn't enqueue
-			db.Delete(&job)
-			return
-		}
-
-		queueLength, _ = requestQueue.GetQueueLength(c.Request.Context())
-		estimatedWait, _ = requestQueue.GetEstimatedWaitTime(c.Request.Context())
-	}
-
-	workflowOptions := client.StartWorkflowOptions{
-		ID:        fmt.Sprintf("doc-processing-%s", jobID),
-		TaskQueue: cfg.TemporalTaskQueue,
-	}
-	workflowInput := map[string]interface{}{
-		"job_id":         jobID,
-		"filename":       header.Filename,
-		"storage_path":   storagePath,
-		"content_type":   header.Header.Get("Content-Type"),
-		"file_ext":       filepath.Ext(header.Filename),
-		"output_formats": outputFormats,
-		"options": map[string]interface{}{
-			"prompt":                     customPrompt,
-			"fast_mode":                  fastMode,
-			"include_coordinates":        includeCoordinates,
-			"include_word_confidence":    includeWordConfidence,
-			"include_line_confidence":    includeLineConfidence,
-			"include_page_layout":        includePageLayout,
-			"language":                   language,
-			"granularity":                granularity,
-			"redact_pii":                 redactPII,
-			"enhance":                    enhance,
-			"deskew":                     deskew,
-			"max_pages":                  maxPages,
-			"temperature":                temperature,
-			"max_tokens":                 maxTokens,
-			"precision_mode":             precisionMode,
-			"extract_fields":             extractFields,
-			"enable_layout_detection":    enableLayoutDetection,
-			"parallel_region_processing": parallelRegionProcessing,
-			"layout_detection_options": map[string]interface{}{
-				"min_confidence":       minConfidence,
-				"detect_tables":        detectTables,
-				"detect_formulas":      detectFormulas,
-				"max_parallel_regions": maxParallelRegions,
-				"cache_layout_results": cacheLayoutResults,
-			},
-		},
-	}
-
-	if temporalClient == nil {
-		log.Printf("⚠️ Temporal not connected — cannot start workflow for job %s", jobID)
-		db.Model(&job).Updates(map[string]interface{}{
-			"status":        models.StatusFailed,
-			"error_message": "Temporal server is not available. Please start Temporal and retry.",
-		})
-		middleware.RecordJobFailed()
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":   "Workflow engine (Temporal) is not available",
-			"job_id":  jobID,
-			"message": "Document uploaded but cannot be processed. Start Temporal and retry.",
-		})
-		return
-	}
-
-	we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, "DocumentProcessingWorkflow", workflowInput)
-	if err != nil {
-		log.Printf("Failed to start workflow for job %s: %v", jobID, err)
-		if requestQueue != nil {
-			if qErr := requestQueue.CancelJob(c.Request.Context(), jobID); qErr != nil {
-				log.Printf("⚠️ Failed to remove failed-start job from queue %s: %v", jobID, qErr)
-			}
-		}
-		db.Model(&job).Updates(map[string]interface{}{
-			"status":        models.StatusFailed,
-			"error_message": fmt.Sprintf("Failed to start workflow: %v", err),
-		})
-		middleware.RecordJobFailed()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start processing workflow"})
-		return
-	}
-
-	db.Model(&job).Updates(map[string]interface{}{
-		"workflow_id": we.GetID(),
-		"run_id":      we.GetRunID(),
-		"status":      models.StatusProcessing,
-	})
-
-	c.JSON(http.StatusAccepted, gin.H{
-		"job_id":                      jobID,
-		"filename":                    header.Filename,
-		"status":                      "QUEUED",
-		"workflow_id":                 we.GetID(),
-		"output_formats":              outputFormats,
-		"queue_position":              queueLength,
-		"estimated_wait_time_seconds": int(estimatedWait.Seconds()),
-		"options": gin.H{
-			"prompt":                     customPrompt,
-			"fast_mode":                  fastMode,
-			"include_coordinates":        includeCoordinates,
-			"include_word_confidence":    includeWordConfidence,
-			"include_line_confidence":    includeLineConfidence,
-			"include_page_layout":        includePageLayout,
-			"language":                   language,
-			"granularity":                granularity,
-			"redact_pii":                 redactPII,
-			"enhance":                    enhance,
-			"deskew":                     deskew,
-			"max_pages":                  maxPages,
-			"temperature":                temperature,
-			"max_tokens":                 maxTokens,
-			"precision_mode":             precisionMode,
-			"extract_fields":             extractFields,
-			"enable_layout_detection":    enableLayoutDetection,
-			"parallel_region_processing": parallelRegionProcessing,
-			"layout_detection_options": gin.H{
-				"min_confidence":       minConfidence,
-				"detect_tables":        detectTables,
-				"detect_formulas":      detectFormulas,
-				"max_parallel_regions": maxParallelRegions,
-				"cache_layout_results": cacheLayoutResults,
-			},
-		},
-		"result_url": fmt.Sprintf("/jobs/%s/result", jobID),
-		"status_url": fmt.Sprintf("/jobs/%s", jobID),
-	})
+	documentService.Upload(c)
 }
 
 func getJobStatus(c *gin.Context) {
@@ -791,12 +470,45 @@ func syncJobWithWorkflowStatus(ctx context.Context, job *models.Job) {
 
 func listJobs(c *gin.Context) {
 	var jobs []models.Job
-	result := db.Order("created_at desc").Limit(100).Find(&jobs)
+
+	// Default pagination
+	limit := 50
+	offset := 0
+
+	// Parse query params
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			if parsedLimit > 100 {
+				limit = 100 // Cap at 100
+			} else {
+				limit = parsedLimit
+			}
+		}
+	}
+
+	if offsetParam := c.Query("offset"); offsetParam != "" {
+		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	// Get total count
+	var totalCount int64
+	db.Model(&models.Job{}).Count(&totalCount)
+
+	result := db.Order("created_at desc").Limit(limit).Offset(offset).Find(&jobs)
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list jobs"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"jobs": jobs, "count": len(jobs)})
+
+	c.JSON(http.StatusOK, gin.H{
+		"jobs":   jobs,
+		"count":  len(jobs),
+		"total":  totalCount,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func getBatchStatus(c *gin.Context) {
@@ -961,6 +673,90 @@ func getQueueStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"queue_length":                queueLength,
 		"estimated_wait_time_seconds": int(estimatedWait.Seconds()),
-		"timestamp":                   time.Now().Format(time.RFC3339),
 	})
+}
+
+// startTemporalSubmitter runs in the background to retry submitting jobs
+// to Temporal if they failed to submit previously.
+func startTemporalSubmitter() {
+	if requestQueue == nil {
+		return
+	}
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if temporalClient == nil {
+			continue // Still no temporal, skip this tick
+		}
+
+		// Limit the number of retries per tick to avoid flooding Temporal when it comes back
+		for i := 0; i < 10; i++ {
+			// Try to get a job
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			queuedJob, err := requestQueue.Dequeue(ctx)
+			cancel()
+
+			if err != nil {
+				log.Printf("⚠️ Background submitter failed to dequeue: %v", err)
+				break
+			}
+
+			if queuedJob == nil {
+				break // Queue is empty
+			}
+
+			// We have a job! Submit it to Temporal
+			log.Printf("🔄 Background submitter retrying job %s", queuedJob.JobID)
+
+			var job models.Job
+			if err := db.First(&job, "id = ?", queuedJob.JobID).Error; err != nil {
+				log.Printf("⚠️ Unknown job %s dequeued", queuedJob.JobID)
+				requestQueue.UpdateStatus(context.Background(), queuedJob.JobID, queue.StatusFailed)
+				continue
+			}
+
+			workflowOptions := client.StartWorkflowOptions{
+				ID:        fmt.Sprintf("doc-processing-%s", job.ID),
+				TaskQueue: cfg.TemporalTaskQueue,
+			}
+
+			workflowInput := map[string]interface{}{
+				"job_id":         job.ID,
+				"filename":       job.Filename,
+				"storage_path":   job.StoragePath,
+				"content_type":   job.ContentType,
+				"output_formats": job.OutputFormats,
+				"options":        queuedJob.Options,
+			}
+
+			we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, "DocumentProcessingWorkflow", workflowInput)
+			if err != nil {
+				log.Printf("⚠️ Background submitter failed again for job %s: %v", job.ID, err)
+				queuedJob.RetryCount++
+				if queuedJob.RetryCount > 5 {
+					log.Printf("❌ Job %s exceeded retries. Marking failed.", job.ID)
+					requestQueue.UpdateStatus(context.Background(), queuedJob.JobID, queue.StatusFailed)
+					db.Model(&job).Updates(map[string]interface{}{
+						"status":        models.StatusFailed,
+						"error_message": "Exceeded retries when submitting to processing workflow",
+					})
+				} else {
+					log.Printf("🔄 Requeuing job %s (attempt %d)", job.ID, queuedJob.RetryCount)
+					requestQueue.CancelJob(context.Background(), queuedJob.JobID)
+					requestQueue.Enqueue(context.Background(), queuedJob)
+				}
+				continue
+			}
+
+			// Success!
+			log.Printf("✅ Background submitter successfully started workflow %s for job %s", we.GetID(), job.ID)
+			db.Model(&job).Updates(map[string]interface{}{
+				"workflow_id": we.GetID(),
+				"run_id":      we.GetRunID(),
+				"status":      models.StatusProcessing,
+			})
+		}
+	}
 }

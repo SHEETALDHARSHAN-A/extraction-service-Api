@@ -106,9 +106,9 @@ func MockGLMOCRServer() *httptest.Server {
 		results := []gin.H{}
 		for _, region := range request.Regions {
 			results = append(results, gin.H{
-				"region_id":   region.RegionID,
-				"content":     "Extracted content for " + region.RegionType,
-				"confidence":  0.92,
+				"region_id":  region.RegionID,
+				"content":    "Extracted content for " + region.RegionType,
+				"confidence": 0.92,
 			})
 		}
 
@@ -155,8 +155,8 @@ func TestIntegration_TwoStagePipeline(t *testing.T) {
 	imageBase64 := base64.StdEncoding.EncodeToString(imageBytes)
 
 	// Process document
-	result, err := orch.ProcessDocument(context.Background(), imageBase64, map[string]interface{}{
-		"enable_layout_detection": true,
+	result, err := orch.ProcessDocument(context.Background(), imageBase64, orchestrator.ProcessingOptions{
+		EnableLayoutDetection: true,
 	})
 
 	// Assertions
@@ -197,8 +197,8 @@ func TestIntegration_FallbackMode(t *testing.T) {
 	imageBase64 := base64.StdEncoding.EncodeToString(imageBytes)
 
 	// Process document (should fallback to full-page mode)
-	result, err := orch.ProcessDocument(context.Background(), imageBase64, map[string]interface{}{
-		"enable_layout_detection": true,
+	result, err := orch.ProcessDocument(context.Background(), imageBase64, orchestrator.ProcessingOptions{
+		EnableLayoutDetection: true,
 	})
 
 	// Assertions

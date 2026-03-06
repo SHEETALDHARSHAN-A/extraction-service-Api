@@ -1,12 +1,10 @@
 package clients
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -82,8 +80,16 @@ func (c *PaddleOCRClient) DetectLayout(ctx context.Context, imageBase64 string, 
 			}
 		}
 
+		startedAt := time.Now()
 		response, err := c.makeRequest(ctx, request)
 		if err == nil {
+			if response.ProcessingTimeMs <= 0 {
+				elapsedMs := time.Since(startedAt).Milliseconds()
+				if elapsedMs <= 0 {
+					elapsedMs = 1
+				}
+				response.ProcessingTimeMs = float64(elapsedMs)
+			}
 			c.circuitBreaker.RecordSuccess()
 			return response, nil
 		}
@@ -97,36 +103,19 @@ func (c *PaddleOCRClient) DetectLayout(ctx context.Context, imageBase64 string, 
 
 // makeRequest performs the actual HTTP request
 func (c *PaddleOCRClient) makeRequest(ctx context.Context, request DetectLayoutRequest) (*DetectLayoutResponse, error) {
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/detect-layout", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("PaddleOCR service returned status %d: %s", resp.StatusCode, string(body))
+	if target, ok := parseGRPCTarget(c.baseURL); ok {
+		var response DetectLayoutResponse
+		err := invokeJSONGRPC(ctx, target, "/paddleocr.PaddleOCRService/DetectLayout", request, &response)
+		if err != nil {
+			return nil, err
+		}
+		return &response, nil
 	}
 
 	var response DetectLayoutResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	err := doJSONRequest(ctx, c.httpClient, http.MethodPost, c.baseURL+"/detect-layout", "PaddleOCR service", request, &response)
+	if err != nil {
+		return nil, err
 	}
 
 	return &response, nil
@@ -134,6 +123,17 @@ func (c *PaddleOCRClient) makeRequest(ctx context.Context, request DetectLayoutR
 
 // HealthCheck checks if the PaddleOCR service is healthy
 func (c *PaddleOCRClient) HealthCheck(ctx context.Context) error {
+	if target, ok := parseGRPCTarget(c.baseURL); ok {
+		if target == "" {
+			return fmt.Errorf("invalid grpc target for PaddleOCR")
+		}
+		return nil
+	}
+
+	if strings.TrimSpace(c.baseURL) == "" {
+		return fmt.Errorf("empty PaddleOCR base URL")
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/health", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create health check request: %w", err)

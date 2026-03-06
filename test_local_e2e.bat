@@ -15,7 +15,7 @@ set API_URL=http://localhost:8000
 set API_KEY=tp-proj-dev-key-123
 
 REM ─── Step 1: Health Check ─────────────────────────────────────
-echo [1/5] Checking API Gateway health...
+echo [1/8] Checking API Gateway health...
 curl -s -o nul -w "%%{http_code}" %API_URL%/health > "%TEMP%\idep_health.txt" 2>nul
 set /p HEALTH_CODE=<"%TEMP%\idep_health.txt"
 if "%HEALTH_CODE%"=="200" (
@@ -27,18 +27,58 @@ if "%HEALTH_CODE%"=="200" (
 )
 
 REM ─── Step 2: Check GLM-OCR Service ───────────────────────────
-echo [2/5] Checking GLM-OCR service health...
-curl -s -o nul -w "%%{http_code}" http://localhost:8002/health > "%TEMP%\idep_glm.txt" 2>nul
-set /p GLM_CODE=<"%TEMP%\idep_glm.txt"
-if "%GLM_CODE%"=="200" (
-    echo   [OK] GLM-OCR service is healthy
+echo [2/8] Checking GLM-OCR service health...
+set GLM_READY=0
+set GLM_TRIES=0
+set GLM_MAX_TRIES=24
+
+:glm_wait_loop
+set /a GLM_TRIES+=1
+curl -s http://localhost:8002/health -o "%TEMP%\idep_glm_health.json" 2>nul
+
+for /f "tokens=*" %%a in ('python -c "import json; d=json.load(open(r'%TEMP%\idep_glm_health.json')); s=str(d.get('health_status', d.get('status',''))).lower(); m=d.get('model_loaded', None); ok=(s=='healthy') or (m is True); print('1' if ok else '0')" 2^>nul') do set GLM_READY=%%a
+
+if "%GLM_READY%"=="1" (
+    echo   [OK] GLM-OCR model is ready
 ) else (
-    echo   [WARN] GLM-OCR service not healthy (code=%GLM_CODE%)
-    echo          Model may still be loading...
+    echo   [INFO] GLM-OCR not ready yet ^(attempt %GLM_TRIES%/%GLM_MAX_TRIES%^) - waiting...
+    if %GLM_TRIES% geq %GLM_MAX_TRIES% (
+        echo   [WARN] GLM-OCR model did not become ready in time.
+        echo          Continuing anyway, extraction may fail with 503 while model restarts.
+    ) else (
+        timeout /t 5 /nobreak >nul
+        goto :glm_wait_loop
+    )
 )
 
-REM ─── Step 3: Find a test file ─────────────────────────────────
-echo [3/5] Looking for test files...
+REM ─── Step 3: Check PaddleOCR Service ─────────────────────────
+echo [3/8] Checking PaddleOCR service health...
+curl -s -o nul -w "%%{http_code}" http://localhost:8001/health > "%TEMP%\idep_paddle.txt" 2>nul
+set /p PADDLE_CODE=<"%TEMP%\idep_paddle.txt"
+if "%PADDLE_CODE%"=="200" (
+    echo   [OK] PaddleOCR service is healthy
+) else (
+    echo   [WARN] PaddleOCR service not healthy (code=%PADDLE_CODE%)
+)
+
+REM ─── Step 4: Check gRPC Ports ────────────────────────────────
+echo [4/8] Checking gRPC service ports...
+set PORT_FAIL=0
+for %%P in (50051 50052 50061 50062) do (
+    powershell -NoProfile -Command "$ok=Test-NetConnection -ComputerName localhost -Port %%P -InformationLevel Quiet -WarningAction SilentlyContinue; if($ok){exit 0}else{exit 1}" >nul 2>nul
+    if errorlevel 1 (
+        echo   [WARN] Port %%P is not listening
+        set PORT_FAIL=1
+    ) else (
+        echo   [OK] Port %%P is listening
+    )
+)
+if "%PORT_FAIL%"=="1" (
+    echo          One or more gRPC services are unavailable.
+)
+
+REM ─── Step 5: Find a test file ─────────────────────────────────
+echo [5/8] Looking for test files...
 
 set TEST_FILE=
 if exist "testfiles\sample.pdf" (
@@ -69,14 +109,34 @@ if "%TEST_FILE%"=="" (
     echo   [OK] Using test file: %TEST_FILE%
 )
 
-REM ─── Step 4: Upload Document ──────────────────────────────────
-echo [4/5] Uploading document...
+REM ─── Step 6: Upload Document ──────────────────────────────────
+echo [6/8] Uploading document...
 echo.
 
 curl -s -X POST %API_URL%/jobs/upload ^
     -H "Authorization: Bearer %API_KEY%" ^
     -F "document=@%TEST_FILE%" ^
-    -F "output_formats=text" ^
+    -F "output_formats=text,json,structured" ^
+    -F "fast_mode=true" ^
+    -F "max_tokens=512" ^
+    -F "precision_mode=high" ^
+    -F "include_coordinates=true" ^
+    -F "include_word_confidence=true" ^
+    -F "include_line_confidence=true" ^
+    -F "include_page_layout=true" ^
+    -F "enable_layout_detection=true" ^
+    -F "detect_tables=true" ^
+    -F "detect_formulas=true" ^
+    -F "parallel_region_processing=true" ^
+    -F "max_parallel_regions=5" ^
+    -F "min_confidence=0.5" ^
+    -F "granularity=word" ^
+    -F "language=auto" ^
+    -F "max_pages=0" ^
+    -F "temperature=0.0" ^
+    -F "redact_pii=false" ^
+    -F "enhance=false" ^
+    -F "deskew=false" ^
     -o "%TEMP%\idep_upload.json"
 
 type "%TEMP%\idep_upload.json"
@@ -94,8 +154,8 @@ echo.
 echo   [OK] Document uploaded! Job ID: %JOB_ID%
 echo.
 
-REM ─── Step 5: Poll for Completion ──────────────────────────────
-echo [5/5] Polling for completion...
+REM ─── Step 7: Poll for Completion ──────────────────────────────
+echo [7/8] Polling for completion...
 
 set ATTEMPTS=0
 set MAX_ATTEMPTS=60
@@ -122,17 +182,14 @@ goto :poll_loop
 
 :completed
 echo.
+echo [8/8] Retrieving final result...
+echo.
 echo   =============================================
 echo   [OK] Job COMPLETED!
 echo   =============================================
 echo.
 
 REM Retrieve result
-echo Retrieving result...
-curl -s %API_URL%/jobs/%JOB_ID%/result ^
-    -H "Authorization: Bearer %API_KEY%" ^
-    -o "demo_results\%JOB_ID%_result.json" 2>nul
-
 if not exist "demo_results" mkdir demo_results
 
 curl -s %API_URL%/jobs/%JOB_ID%/result ^
@@ -171,5 +228,6 @@ echo.
 REM Cleanup temp files
 del "%TEMP%\idep_health.txt" 2>nul
 del "%TEMP%\idep_glm.txt" 2>nul
+del "%TEMP%\idep_paddle.txt" 2>nul
 del "%TEMP%\idep_upload.json" 2>nul
 del "%TEMP%\idep_status.json" 2>nul

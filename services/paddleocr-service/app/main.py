@@ -2,12 +2,16 @@
 
 import base64
 import io
+import json
+import os
 import time
 import uuid
 import logging
 from contextlib import asynccontextmanager
+from concurrent import futures
 from typing import Optional
 
+import grpc
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +25,7 @@ from .models import (
     HealthResponse,
     ErrorResponse,
     Region,
+    LayoutDetectionOptions,
     PageDimensions,
 )
 from .layout_detector import get_layout_detector
@@ -31,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Service start time for uptime calculation
 SERVICE_START_TIME = time.time()
+GRPC_SERVER = None
 
 
 @asynccontextmanager
@@ -55,12 +61,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize layout detector: {e}")
         # Don't raise here, allow service to start in degraded mode
+
+    # Start internal gRPC server for service-to-service calls
+    try:
+        grpc_port = int(getattr(settings, "grpc_port", 50061))
+    except Exception:
+        grpc_port = int(os.getenv("GRPC_PORT", "50061"))
+    _start_grpc_server(grpc_port)
     
     logger.info(f"Service started successfully on {settings.service_host}:{settings.service_port}")
     
     yield
     
     # Shutdown
+    _stop_grpc_server()
     logger.info("Shutting down service...")
     logger.info("Service shutdown complete")
 
@@ -183,6 +197,92 @@ def decode_base64_image(image_data: str) -> Image.Image:
     except Exception as e:
         logger.error(f"Failed to decode base64 image: {e}")
         raise ValueError(f"Invalid image data: {e}")
+
+
+def _run_layout_detection(image_b64: str, options_dict: dict) -> dict:
+    pil_image = decode_base64_image(image_b64)
+    detector = get_layout_detector()
+    detector.validate_image_size(pil_image, max_size_mb=settings.max_image_size_mb)
+
+    numpy_image = np.array(pil_image)
+    opts = LayoutDetectionOptions(**(options_dict or {}))
+    min_confidence = opts.min_confidence or settings.min_confidence_default
+
+    started = time.time()
+    regions_data, page_dims = detector.detect_regions(
+        image=numpy_image,
+        min_confidence=min_confidence,
+        detect_tables=opts.detect_tables,
+        detect_formulas=opts.detect_formulas,
+    )
+
+    regions = [Region(**region).model_dump() for region in regions_data]
+    page_dimensions = PageDimensions(**page_dims).model_dump() if opts.return_image_dimensions else None
+    processing_time_ms = (time.time() - started) * 1000
+    model_info = detector.get_model_info()
+
+    return {
+        "regions": regions,
+        "page_dimensions": page_dimensions,
+        "processing_time_ms": processing_time_ms,
+        "model_version": model_info["version"],
+        "total_regions_detected": len(regions_data),
+        "regions_filtered": 0,
+    }
+
+
+def _deserialize_grpc_request(payload: bytes) -> dict:
+    return json.loads(payload.decode("utf-8")) if payload else {}
+
+
+def _serialize_grpc_response(response: dict) -> bytes:
+    return json.dumps(response).encode("utf-8")
+
+
+def _grpc_detect_layout(request: dict, _context) -> dict:
+    try:
+        image = request.get("image", "")
+        options = request.get("options") or {}
+        return _run_layout_detection(image, options)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "regions": [],
+            "page_dimensions": None,
+            "processing_time_ms": 0,
+            "model_version": "PPStructureV3",
+            "total_regions_detected": 0,
+            "regions_filtered": 0,
+            "error": str(exc),
+        }
+
+
+def _start_grpc_server(port: int) -> None:
+    global GRPC_SERVER
+    if GRPC_SERVER is not None:
+        return
+
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
+    rpc_handlers = {
+        "DetectLayout": grpc.unary_unary_rpc_method_handler(
+            _grpc_detect_layout,
+            request_deserializer=_deserialize_grpc_request,
+            response_serializer=_serialize_grpc_response,
+        )
+    }
+    generic_handler = grpc.method_handlers_generic_handler("paddleocr.PaddleOCRService", rpc_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_insecure_port(f"[::]:{port}")
+    server.start()
+    GRPC_SERVER = server
+    logger.info("PaddleOCR gRPC server started on port %s", port)
+
+
+def _stop_grpc_server() -> None:
+    global GRPC_SERVER
+    if GRPC_SERVER is None:
+        return
+    GRPC_SERVER.stop(grace=3)
+    GRPC_SERVER = None
 
 
 # API Endpoints

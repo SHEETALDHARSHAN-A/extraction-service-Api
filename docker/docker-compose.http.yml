@@ -1,0 +1,9 @@
+services:
+  api-gateway:
+    environment:
+      - PADDLEOCR_SERVICE_URL=${PADDLEOCR_SERVICE_URL:-http://paddleocr-service:8001}
+      - GLM_OCR_SERVICE_URL=${GLM_OCR_SERVICE_URL:-http://glm-ocr-service:8002}
+
+  temporal-worker:
+    environment:
+      - GLM_OCR_SERVICE_URL=${GLM_OCR_SERVICE_URL:-http://glm-ocr-service:8002}

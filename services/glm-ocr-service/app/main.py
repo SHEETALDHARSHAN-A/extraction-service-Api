@@ -1,5 +1,6 @@
 """GLM-OCR Service - FastAPI application."""
 import asyncio
+from concurrent import futures
 
 import time
 import logging
@@ -11,8 +12,10 @@ import base64
 import io
 from contextlib import asynccontextmanager
 from typing import Dict, Any
+from types import SimpleNamespace
 from PIL import Image
 
+import grpc
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,6 +37,7 @@ from .models import (
 )
 from .prompts import get_prompt_for_region_type
 from .glm_inference import GLMInferenceEngine
+from .gpu_executor import SingleFlightGPUExecutor
 from .gpu_monitor import GPUMonitor
 from .extractors import WordLevelExtractor, KeyValueExtractor
 from .validators import ExtractionValidator
@@ -113,7 +117,17 @@ async def _extract_with_timeout(
     max_tokens: int,
     output_format: str,
 ) -> tuple[str, float, int, int]:
-    """Run blocking inference in a worker thread with a hard timeout."""
+    """Run inference with hard timeout; use isolated worker when configured."""
+    if settings.use_isolated_gpu_executor and gpu_executor:
+        return await asyncio.to_thread(
+            gpu_executor.execute,
+            image_base64=image_base64,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            output_format=output_format,
+            timeout_seconds=float(settings.request_timeout_seconds),
+        )
+
     return await asyncio.wait_for(
         asyncio.to_thread(
             inference_engine.extract_content,
@@ -124,6 +138,12 @@ async def _extract_with_timeout(
         ),
         timeout=float(settings.request_timeout_seconds),
     )
+
+
+def _inference_ready() -> bool:
+    if settings.use_isolated_gpu_executor:
+        return gpu_executor is not None and gpu_executor.is_ready()
+    return inference_engine is not None and inference_engine.is_ready()
 
 
 def infer_page_bbox(image_base64: str) -> list[int]:
@@ -207,6 +227,7 @@ extraction_tokens_total = Counter('extraction_tokens_total', 'Total tokens used'
 
 # Global inference engine and GPU monitor
 inference_engine: GLMInferenceEngine = None
+gpu_executor: SingleFlightGPUExecutor = None
 gpu_monitor: GPUMonitor = None
 word_extractor: WordLevelExtractor = None
 kv_extractor: KeyValueExtractor = None
@@ -215,12 +236,13 @@ preprocessing_cache: PreprocessingCache = None
 performance_monitor: PerformanceMonitor = None
 service_start_time = time.time()
 jaeger_tracer = None
+grpc_server = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown."""
-    global inference_engine, gpu_monitor, word_extractor, kv_extractor, validator, preprocessing_cache, performance_monitor, jaeger_tracer
+    global inference_engine, gpu_executor, gpu_monitor, word_extractor, kv_extractor, validator, preprocessing_cache, performance_monitor, jaeger_tracer
     
     # Startup
     logger.info(f"Starting {settings.service_name} v{settings.service_version}")
@@ -284,13 +306,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize performance monitor: {e}")
     
-    # Initialize inference engine
+    # Initialize inference engine or isolated executor
     try:
-        inference_engine = GLMInferenceEngine(
-            model_path=settings.glm_model_path,
-            precision_mode=settings.glm_precision_mode
-        )
-        logger.info("GLM-OCR inference engine initialized")
+        if settings.use_isolated_gpu_executor:
+            gpu_executor = SingleFlightGPUExecutor(
+                model_path=settings.glm_model_path,
+                precision_mode=settings.glm_precision_mode,
+            )
+            gpu_executor.start()
+            logger.info("GLM-OCR isolated GPU executor initialized")
+        else:
+            inference_engine = GLMInferenceEngine(
+                model_path=settings.glm_model_path,
+                precision_mode=settings.glm_precision_mode
+            )
+            logger.info("GLM-OCR inference engine initialized")
         
         if gpu_monitor:
             gpu_monitor.log_memory_usage("after model load")
@@ -312,12 +342,21 @@ async def lifespan(app: FastAPI):
             dummy_image_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
             
             # Run dummy inference
-            _, _, _, _ = inference_engine.extract_content(
-                image_base64=dummy_image_b64,
-                prompt="Extract text",
-                max_tokens=10,
-                output_format="text"
-            )
+            if settings.use_isolated_gpu_executor and gpu_executor:
+                gpu_executor.execute(
+                    image_base64=dummy_image_b64,
+                    prompt="Extract text",
+                    max_tokens=10,
+                    output_format="text",
+                    timeout_seconds=min(30, settings.request_timeout_seconds),
+                )
+            elif inference_engine:
+                _, _, _, _ = inference_engine.extract_content(
+                    image_base64=dummy_image_b64,
+                    prompt="Extract text",
+                    max_tokens=10,
+                    output_format="text"
+                )
             
             warmup_time = time.time() - warmup_start
             logger.info(f"Model warmup completed in {warmup_time:.2f}s")
@@ -331,11 +370,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize inference engine: {e}")
         # Continue anyway - health check will report unhealthy
+
+    # Start internal gRPC server for service-to-service calls
+    grpc_port = int(os.getenv("GRPC_PORT", "50062"))
+    _start_grpc_server(grpc_port)
     
     yield
     
     # Shutdown
     logger.info("Shutting down GLM-OCR service")
+    _stop_grpc_server()
+    if gpu_executor:
+        gpu_executor.stop()
     if inference_engine:
         inference_engine.cleanup()
 
@@ -356,6 +402,59 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _deserialize_grpc_request(payload: bytes) -> dict:
+    return json.loads(payload.decode("utf-8")) if payload else {}
+
+
+def _serialize_grpc_response(response: dict) -> bytes:
+    return json.dumps(response).encode("utf-8")
+
+
+def _grpc_extract_regions_batch(request_payload: dict, _context) -> dict:
+    request_id = str(uuid.uuid4())
+    fake_req = SimpleNamespace(state=SimpleNamespace(request_id=request_id, trace_id="grpc"))
+
+    try:
+        request = BatchRegionExtractionRequest(**request_payload)
+        response = asyncio.run(extract_regions_batch(request, fake_req))
+        if hasattr(response, "model_dump"):
+            return response.model_dump()
+        return dict(response)
+    except HTTPException as exc:
+        raise RuntimeError(f"glm-ocr grpc batch extraction failed: {exc.detail}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"glm-ocr grpc batch extraction failed: {exc}") from exc
+
+
+def _start_grpc_server(port: int) -> None:
+    global grpc_server
+    if grpc_server is not None:
+        return
+
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
+    rpc_handlers = {
+        "ExtractRegionsBatch": grpc.unary_unary_rpc_method_handler(
+            _grpc_extract_regions_batch,
+            request_deserializer=_deserialize_grpc_request,
+            response_serializer=_serialize_grpc_response,
+        )
+    }
+    generic_handler = grpc.method_handlers_generic_handler("glmocr.GLMOCRService", rpc_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_insecure_port(f"[::]:{port}")
+    server.start()
+    grpc_server = server
+    logger.info("GLM-OCR gRPC server started on port %s", port)
+
+
+def _stop_grpc_server() -> None:
+    global grpc_server
+    if grpc_server is None:
+        return
+    grpc_server.stop(grace=3)
+    grpc_server = None
 
 
 def update_gpu_metrics():
@@ -486,12 +585,15 @@ async def health_check():
     """
     uptime = int(time.time() - service_start_time)
     
-    model_loaded = inference_engine is not None and inference_engine.is_ready()
+    model_loaded = _inference_ready()
     gpu_available = False
     device = "cpu"
     gpu_memory_stats = None
     
-    if inference_engine:
+    if settings.use_isolated_gpu_executor:
+        device = "cuda" if model_loaded else "cpu"
+        gpu_available = model_loaded
+    elif inference_engine:
         device = inference_engine.device
         gpu_available = device == "cuda"
     
@@ -618,7 +720,7 @@ async def extract_region(request: RegionExtractionRequest, req: Request):
         trace_id=trace_id
     )
     
-    if not inference_engine or not inference_engine.is_ready():
+    if not _inference_ready():
         # Log stub process failure with structured logging
         gpu_stats = None
         if gpu_monitor and gpu_monitor.gpu_available:
@@ -967,7 +1069,7 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
         trace_id=trace_id
     )
     
-    if not inference_engine or not inference_engine.is_ready():
+    if not _inference_ready():
         # Log stub process failure with structured logging
         gpu_stats = None
         if gpu_monitor and gpu_monitor.gpu_available:
@@ -989,17 +1091,27 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
             headers={"Retry-After": "30"}
         )
     
+    # Get options early so resource checks can respect fast mode.
+    options = request.options or {}
+    fast_mode = bool(options.get("fast_mode", False))
+
     # Check GPU memory availability
     if gpu_monitor and gpu_monitor.gpu_available:
-        if not gpu_monitor.has_sufficient_memory(required_gb=2.0):
+        required_gb = 2.0
+        if settings.low_vram_mode:
+            required_gb = 1.2
+        if fast_mode:
+            required_gb = min(required_gb, 1.0)
+
+        if not gpu_monitor.has_sufficient_memory(required_gb=required_gb):
             stats = gpu_monitor.get_memory_stats()
             logger.warning(
                 f"Insufficient GPU memory for batch: {stats.get('free_gb', 0):.2f}GB available, "
-                f"2.0GB required [request_id={request_id}]"
+                f"{required_gb:.1f}GB required [request_id={request_id}]"
             )
             raise HTTPException(
                 status_code=503,
-                detail=f"Insufficient GPU memory. Available: {stats.get('free_gb', 0):.2f}GB, Required: 2.0GB",
+                detail=f"Insufficient GPU memory. Available: {stats.get('free_gb', 0):.2f}GB, Required: {required_gb:.1f}GB",
                 headers={"Retry-After": "60"}
             )
         
@@ -1021,12 +1133,15 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
     total_prompt_tokens = 0
     total_completion_tokens = 0
     
-    # Get options
-    options = request.options or {}
     max_tokens = int(options.get("max_tokens", settings.max_tokens_default))
     max_tokens = min(max_tokens, int(settings.max_tokens_limit))
     if settings.low_vram_mode and gpu_monitor and gpu_monitor.gpu_available:
         max_tokens = min(max_tokens, int(settings.low_vram_max_tokens))
+
+    if fast_mode:
+        max_tokens = min(max_tokens, 512)
+        logger.info(f"Fast mode enabled for batch: max_tokens={max_tokens} [request_id={request_id}]")
+
     output_format = options.get("output_format", "text")
     
     # Process each region
@@ -1057,19 +1172,7 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
                 detail=f"Batch inference timeout after {settings.request_timeout_seconds}s",
                 headers={"Retry-After": "10"}
             )
-            
-            total_prompt_tokens += prompt_tokens
-            total_completion_tokens += completion_tokens
-            
-            results.append(BatchRegionResult(
-                region_id=region.region_id,
-                content=content,
-                confidence=confidence,
-                error=None
-            ))
-            
-            logger.info(f"Region {region.region_id} processed successfully [request_id={request_id}]")
-            
+
         except Exception as e:
             # Check if this is a CUDA out-of-memory error
             import torch
@@ -1109,6 +1212,19 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
                 confidence=0.0,
                 error=str(e)
             ))
+
+        else:
+            total_prompt_tokens += prompt_tokens
+            total_completion_tokens += completion_tokens
+
+            results.append(BatchRegionResult(
+                region_id=region.region_id,
+                content=content,
+                confidence=confidence,
+                error=None
+            ))
+
+            logger.info(f"Region {region.region_id} processed successfully [request_id={request_id}]")
     
     total_processing_time_ms = int((time.time() - start_time) * 1000)
     

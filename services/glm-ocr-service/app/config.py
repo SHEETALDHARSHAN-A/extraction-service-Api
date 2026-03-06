@@ -2,6 +2,7 @@
 
 import os
 import logging
+from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings
 
@@ -39,6 +40,9 @@ class Settings(BaseSettings):
     chunk_segment_count: int = int(os.getenv("CHUNK_SEGMENT_COUNT", "3"))
     chunk_overlap_px: int = int(os.getenv("CHUNK_OVERLAP_PX", "120"))
     chunk_segment_max_tokens: int = int(os.getenv("CHUNK_SEGMENT_MAX_TOKENS", "1024"))
+    # Isolated GPU executor: run inference in a dedicated child process that can be
+    # force-killed on timeout (true cancellation semantics).
+    use_isolated_gpu_executor: bool = os.getenv("USE_ISOLATED_GPU_EXECUTOR", "false").lower() == "true"
     
     # Logging settings
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
@@ -48,9 +52,64 @@ class Settings(BaseSettings):
     triton_model_dir: Optional[str] = os.getenv("TRITON_MODEL_DIR")
     
     class Config:
-        env_file = ".env"
+        env_file = str(Path(__file__).resolve().parents[3] / ".env")
         case_sensitive = False
         extra = "ignore"  # Ignore extra environment variables
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    data: dict[str, str] = {}
+    if not path.exists():
+        return data
+    for line in path.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#") or "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        data[key.strip()] = value.strip()
+    return data
+
+
+def _validate_env_authority() -> None:
+    """Fail fast if service-local and root env files conflict on critical keys."""
+    repo_env = Path(__file__).resolve().parents[3] / ".env"
+    service_env = Path(__file__).resolve().parents[1] / ".env"
+
+    if not repo_env.exists() or not service_env.exists():
+        return
+
+    repo_vals = _parse_env_file(repo_env)
+    svc_vals = _parse_env_file(service_env)
+
+    critical_keys = {
+        "GLM_MODEL_PATH",
+        "GLM_PRECISION_MODE",
+        "REQUEST_TIMEOUT_SECONDS",
+        "LOW_VRAM_MAX_TOKENS",
+        "LOW_VRAM_MAX_IMAGE_EDGE",
+        "LOW_VRAM_RETRY_MAX_TOKENS",
+        "LOW_VRAM_RETRY_IMAGE_EDGE",
+        "CHUNK_LARGE_PAGES",
+        "CHUNK_TRIGGER_MAX_EDGE",
+        "CHUNK_SEGMENT_COUNT",
+        "CHUNK_OVERLAP_PX",
+        "CHUNK_SEGMENT_MAX_TOKENS",
+        "USE_ISOLATED_GPU_EXECUTOR",
+    }
+
+    conflicts = []
+    for key in critical_keys:
+        rv = repo_vals.get(key)
+        sv = svc_vals.get(key)
+        if rv is not None and sv is not None and rv != sv:
+            conflicts.append(f"{key}: root='{rv}' service='{sv}'")
+
+    if conflicts:
+        joined = "; ".join(conflicts)
+        raise RuntimeError(
+            f"Environment conflict detected between {repo_env} and {service_env}. "
+            f"Use root .env as single authority. Conflicts: {joined}"
+        )
 
 
 def setup_logging(log_level: str = "INFO") -> None:
@@ -62,5 +121,6 @@ def setup_logging(log_level: str = "INFO") -> None:
     )
 
 
+_validate_env_authority()
 settings = Settings()
 setup_logging(settings.log_level)

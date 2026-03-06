@@ -1,12 +1,12 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"image"
 	"image/color"
 	"image/png"
-	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,8 +88,8 @@ func TestProcessDocument_LayoutDetectionDisabled(t *testing.T) {
 	)
 
 	imageBase64 := createTestImage()
-	options := map[string]interface{}{
-		"enable_layout_detection": false,
+	options := ProcessingOptions{
+		EnableLayoutDetection: false,
 	}
 
 	// Mock GLM-OCR batch extraction
@@ -134,8 +134,8 @@ func TestProcessDocument_LayoutDetectionEnabled(t *testing.T) {
 	)
 
 	imageBase64 := createTestImage()
-	options := map[string]interface{}{
-		"enable_layout_detection": true,
+	options := ProcessingOptions{
+		EnableLayoutDetection: true,
 	}
 
 	// Mock PaddleOCR layout detection
@@ -215,8 +215,8 @@ func TestProcessDocument_LayoutDetectionFallback(t *testing.T) {
 	)
 
 	imageBase64 := createTestImage()
-	options := map[string]interface{}{
-		"enable_layout_detection": true,
+	options := ProcessingOptions{
+		EnableLayoutDetection: true,
 	}
 
 	// Mock PaddleOCR layout detection failure

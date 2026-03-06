@@ -13,6 +13,7 @@ set SERVICE_HOST=0.0.0.0
 set SERVICE_PORT=8002
 set LOG_LEVEL=INFO
 set MAX_TOKENS_DEFAULT=2048
+set USE_ISOLATED_GPU_EXECUTOR=false
 
 echo.
 echo Starting service on http://localhost:8002

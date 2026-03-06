@@ -5,6 +5,7 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
+grpcio>=1.62.0
 
 # ML dependencies
 torch==2.1.0

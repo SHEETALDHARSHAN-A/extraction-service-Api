@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 /*
@@ -30,11 +31,18 @@ No roles, no JWT, no tokens to manage.
 
 // ─── API Key Store ───
 
-var apiKeys = loadAPIKeys()
-
 type keyInfo struct {
 	key    string
 	isTest bool
+}
+
+type APIKeyStore struct {
+	mu   sync.RWMutex
+	keys []keyInfo
+}
+
+var globalKeyStore = &APIKeyStore{
+	keys: loadAPIKeys(),
 }
 
 func loadAPIKeys() []keyInfo {
@@ -56,13 +64,28 @@ func loadAPIKeys() []keyInfo {
 	return keys
 }
 
-func isValidKey(provided string) (bool, bool) {
-	for _, k := range apiKeys {
+func (s *APIKeyStore) Reload() {
+	newKeys := loadAPIKeys()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.keys = newKeys
+}
+
+func (s *APIKeyStore) IsValid(provided string) (bool, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, k := range s.keys {
 		if subtle.ConstantTimeCompare([]byte(provided), []byte(k.key)) == 1 {
 			return true, k.isTest
 		}
 	}
 	return false, false
+}
+
+// ReloadAPIKeys triggers a reload of the API keys from the environment
+func ReloadAPIKeys() {
+	globalKeyStore.Reload()
 }
 
 // ─── Auth Middleware ───
@@ -81,7 +104,7 @@ func Auth() gin.HandlerFunc {
 			return
 		}
 
-		valid, isTest := isValidKey(apiKey)
+		valid, isTest := globalKeyStore.IsValid(apiKey)
 		if !valid {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": map[string]interface{}{
@@ -117,17 +140,24 @@ func extractAPIKey(c *gin.Context) string {
 
 // ─── Rate Limiting (per API key, 100 req/min) ───
 
+var (
+	redisClient  *redis.Client
+	localLimiter *rateLimiter
+	limit        = 100
+	window       = time.Minute
+)
+
+// InitRateLimiter initializes the rate limiter with a Redis client (can be nil for local only fallback)
+func InitRateLimiter(rdb *redis.Client) {
+	redisClient = rdb
+	localLimiter = &rateLimiter{
+		requests: make(map[string][]time.Time),
+	}
+}
+
 type rateLimiter struct {
 	mu       sync.Mutex
 	requests map[string][]time.Time
-	limit    int
-	window   time.Duration
-}
-
-var limiter = &rateLimiter{
-	requests: make(map[string][]time.Time),
-	limit:    100,
-	window:   time.Minute,
 }
 
 func RateLimit() gin.HandlerFunc {
@@ -140,19 +170,59 @@ func RateLimit() gin.HandlerFunc {
 			key = apiKey
 		}
 
-		limiter.mu.Lock()
+		ctx := c.Request.Context()
 		now := time.Now()
+		var allowed = false
+		var remaining = 0
 
-		valid := make([]time.Time, 0)
-		for _, t := range limiter.requests[key] {
-			if now.Sub(t) < limiter.window {
-				valid = append(valid, t)
+		if redisClient != nil {
+			// Distributed rate limiting with Redis
+			redisKey := fmt.Sprintf("ratelimit:%s", key)
+
+			pipe := redisClient.Pipeline()
+			// Remove older requests
+			pipe.ZRemRangeByScore(ctx, redisKey, "0", fmt.Sprintf("%d", now.Add(-window).UnixMilli()))
+			// Add current request
+			pipe.ZAdd(ctx, redisKey, redis.Z{Score: float64(now.UnixMilli()), Member: now.UnixNano()})
+			// Count requests in window
+			countCmd := pipe.ZCard(ctx, redisKey)
+			// Expire key after window
+			pipe.Expire(ctx, redisKey, window)
+
+			_, err := pipe.Exec(ctx)
+			if err == nil {
+				requestCount := countCmd.Val()
+				if requestCount <= int64(limit) {
+					allowed = true
+					remaining = limit - int(requestCount)
+				}
+			} else {
+				// Fallback to true if Redis fails
+				allowed = true
+				remaining = 1
 			}
-		}
-		limiter.requests[key] = valid
+		} else {
+			// Memory-based local fallback
+			localLimiter.mu.Lock()
 
-		if len(valid) >= limiter.limit {
-			limiter.mu.Unlock()
+			valid := make([]time.Time, 0)
+			for _, t := range localLimiter.requests[key] {
+				if now.Sub(t) < window {
+					valid = append(valid, t)
+				}
+			}
+
+			if len(valid) < limit {
+				valid = append(valid, now)
+				allowed = true
+				remaining = limit - len(valid)
+			}
+
+			localLimiter.requests[key] = valid
+			localLimiter.mu.Unlock()
+		}
+
+		if !allowed {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error": map[string]interface{}{
 					"message": "Rate limit reached. Please slow down.",
@@ -163,11 +233,7 @@ func RateLimit() gin.HandlerFunc {
 			return
 		}
 
-		limiter.requests[key] = append(limiter.requests[key], now)
-		remaining := limiter.limit - len(valid) - 1
-		limiter.mu.Unlock()
-
-		c.Header("x-ratelimit-limit-requests", "100")
+		c.Header("x-ratelimit-limit-requests", fmt.Sprintf("%d", limit))
 		c.Header("x-ratelimit-remaining-requests", fmt.Sprintf("%d", remaining))
 		c.Header("x-ratelimit-reset-requests", "60s")
 		c.Next()

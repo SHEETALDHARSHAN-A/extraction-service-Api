@@ -629,6 +629,10 @@ func (a *Activities) callTritonHTTP(ctx context.Context, imagePath, prompt, opti
 }
 
 func (a *Activities) callGLMOCRHTTP(ctx context.Context, imagePath, prompt, options, precisionMode string) (string, float64, error) {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(a.GLMOCRServiceURL)), "grpc://") {
+		return a.callGLMOCRGRPC(ctx, imagePath, prompt, options, precisionMode)
+	}
+
 	glmURL := strings.TrimRight(a.GLMOCRServiceURL, "/") + "/extract-region"
 	if strings.TrimSpace(a.GLMOCRServiceURL) == "" {
 		glmURL = "http://localhost:8002/extract-region"
@@ -692,6 +696,73 @@ func (a *Activities) callGLMOCRHTTP(ctx context.Context, imagePath, prompt, opti
 	}
 
 	return extractResp.Content, extractResp.Confidence, nil
+}
+
+func (a *Activities) callGLMOCRGRPC(ctx context.Context, imagePath, prompt, options, precisionMode string) (string, float64, error) {
+	target := strings.TrimPrefix(strings.TrimSpace(a.GLMOCRServiceURL), "grpc://")
+	if target == "" {
+		target = "localhost:50062"
+	}
+
+	imgBytes, err := os.ReadFile(imagePath)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to read image for glm grpc service: %w", err)
+	}
+
+	optionsMap := map[string]interface{}{}
+	if strings.TrimSpace(options) != "" {
+		if err := json.Unmarshal([]byte(options), &optionsMap); err != nil {
+			return "", 0, fmt.Errorf("invalid options json for glm grpc service: %w", err)
+		}
+	}
+	if precisionMode != "" {
+		optionsMap["precision_mode"] = precisionMode
+	}
+
+	requestPayload := map[string]interface{}{
+		"regions": []map[string]interface{}{
+			{
+				"region_id":   "region_0",
+				"image":       base64.StdEncoding.EncodeToString(imgBytes),
+				"region_type": "text",
+				"prompt":      prompt,
+			},
+		},
+		"options": optionsMap,
+	}
+
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to connect to glm grpc service: %w", err)
+	}
+	defer conn.Close()
+
+	var response struct {
+		Results []struct {
+			RegionID   string  `json:"region_id"`
+			Content    string  `json:"content"`
+			Confidence float64 `json:"confidence"`
+			Error      string  `json:"error"`
+		} `json:"results"`
+	}
+
+	if err := conn.Invoke(ctx, "/glmocr.GLMOCRService/ExtractRegionsBatch", requestPayload, &response, preprocessing.JSONCallOption()); err != nil {
+		return "", 0, fmt.Errorf("glm grpc invoke failed: %w", err)
+	}
+
+	if len(response.Results) == 0 {
+		return "", 0, fmt.Errorf("missing results in glm grpc response")
+	}
+
+	first := response.Results[0]
+	if strings.TrimSpace(first.Error) != "" {
+		return "", 0, fmt.Errorf("glm grpc response error: %s", first.Error)
+	}
+	if strings.TrimSpace(first.Content) == "" {
+		return "", 0, fmt.Errorf("missing content in glm grpc response")
+	}
+
+	return first.Content, first.Confidence, nil
 }
 
 // generateMockResult returns format-specific mock output
@@ -880,7 +951,18 @@ func (a *Activities) PostProcess(ctx context.Context, input *ExtractionOutput) (
 		inlineResult = input.RawContent
 	}
 
+	// Attempt to unmarshal post-processed structured content so `result` is an object,
+	// not a JSON-encoded string. Keep the original string under `result_text` for
+	// backward compatibility with any existing consumers.
+	var structuredResult interface{}
+	if err := json.Unmarshal([]byte(resp.StructuredContent), &structuredResult); err != nil {
+		structuredResult = map[string]interface{}{
+			"raw_text": resp.StructuredContent,
+		}
+	}
+
 	envelope := map[string]interface{}{
+		"schema_version":      "2.0",
 		"job_id":              input.JobID,
 		"model":               "zai-org/GLM-OCR",
 		"document_confidence": resp.ConfidenceScore,
@@ -888,7 +970,8 @@ func (a *Activities) PostProcess(ctx context.Context, input *ExtractionOutput) (
 		"extraction_time":     input.ExtractionTime,
 		"output_formats":      input.Options.OutputFormats,
 		"precision_mode":      input.Options.PrecisionMode,
-		"result":              resp.StructuredContent,
+		"result":              structuredResult,
+		"result_text":         resp.StructuredContent,
 		"raw_pages":           inlineResult,
 		"timestamp":           time.Now().Format(time.RFC3339),
 	}

@@ -36,14 +36,32 @@ type OrchestratorConfig struct {
 	ParallelProcessing    bool
 }
 
+// ProcessingOptions holds options for document processing
+type ProcessingOptions struct {
+	EnableLayoutDetection    bool          `json:"enable_layout_detection"`
+	ParallelRegionProcessing bool          `json:"parallel_region_processing"`
+	OutputFormat             string        `json:"output_format"`
+	MaxTokens                int           `json:"max_tokens"`
+	PrecisionMode            string        `json:"precision_mode"`
+	LayoutDetectionOptions   LayoutOptions `json:"layout_detection_options"`
+}
+
+// LayoutOptions holds options for layout detection
+type LayoutOptions struct {
+	MinConfidence         float64 `json:"min_confidence"`
+	DetectTables          bool    `json:"detect_tables"`
+	DetectFormulas        bool    `json:"detect_formulas"`
+	ReturnImageDimensions bool    `json:"return_image_dimensions"`
+}
+
 // ProcessingResult represents the final result of document processing
 type ProcessingResult struct {
-	Pages      []PageResult       `json:"pages"`
-	Markdown   string             `json:"markdown"`
-	Model      string             `json:"model"`
-	Mode       string             `json:"mode"`
-	Confidence float64            `json:"confidence"`
-	Usage      ProcessingUsage    `json:"usage"`
+	Pages      []PageResult           `json:"pages"`
+	Markdown   string                 `json:"markdown"`
+	Model      string                 `json:"model"`
+	Mode       string                 `json:"mode"`
+	Confidence float64                `json:"confidence"`
+	Usage      ProcessingUsage        `json:"usage"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -66,11 +84,11 @@ type PageElement struct {
 
 // ProcessingUsage tracks processing time for each stage
 type ProcessingUsage struct {
-	LayoutDetectionMs    float64 `json:"layout_detection_ms"`
-	ContentExtractionMs  float64 `json:"content_extraction_ms"`
-	TotalMs              float64 `json:"total_ms"`
-	RegionsProcessed     int     `json:"regions_processed"`
-	CacheHit             bool    `json:"cache_hit,omitempty"`
+	LayoutDetectionMs   float64 `json:"layout_detection_ms"`
+	ContentExtractionMs float64 `json:"content_extraction_ms"`
+	TotalMs             float64 `json:"total_ms"`
+	RegionsProcessed    int     `json:"regions_processed"`
+	CacheHit            bool    `json:"cache_hit,omitempty"`
 }
 
 // NewOrchestrator creates a new orchestrator
@@ -92,15 +110,22 @@ func NewOrchestrator(
 func (o *Orchestrator) ProcessDocument(
 	ctx context.Context,
 	imageBase64 string,
-	options map[string]interface{},
+	options ProcessingOptions,
 ) (*ProcessingResult, error) {
 	startTime := time.Now()
 
 	// Check if layout detection is enabled
 	enableLayoutDetection := o.config.EnableLayoutDetection
-	if val, ok := options["enable_layout_detection"].(bool); ok {
-		enableLayoutDetection = val
+	// Override with options if explicitly set (assuming true by default or explicit via flag)
+	if options.EnableLayoutDetection {
+		enableLayoutDetection = true
+	} else if !options.EnableLayoutDetection && options.LayoutDetectionOptions.MinConfidence > 0 {
+		enableLayoutDetection = false // Can add more explicit flags if necessary, kept simple here
 	}
+
+	// A more explicit override could be:
+	// if has explicit field in request JSON, but keeping it simple based on structs
+	enableLayoutDetection = options.EnableLayoutDetection
 
 	if !enableLayoutDetection {
 		// Fallback to full-page mode
@@ -151,12 +176,12 @@ func (o *Orchestrator) ProcessDocument(
 func (o *Orchestrator) detectLayout(
 	ctx context.Context,
 	imageBase64 string,
-	options map[string]interface{},
+	options ProcessingOptions,
 ) (*clients.DetectLayoutResponse, error) {
 	// Check cache if enabled
 	if o.config.CacheLayoutResults && o.redisCache != nil {
 		cacheKey := o.generateLayoutCacheKey(imageBase64, options)
-		
+
 		if cachedData, found := o.redisCache.Get(ctx, cacheKey); found {
 			var response clients.DetectLayoutResponse
 			if err := json.Unmarshal([]byte(cachedData), &response); err == nil {
@@ -166,28 +191,32 @@ func (o *Orchestrator) detectLayout(
 		}
 	}
 
-	// Prepare layout detection options
-	layoutOptions := make(map[string]interface{})
-	if layoutOpts, ok := options["layout_detection_options"].(map[string]interface{}); ok {
-		layoutOptions = layoutOpts
+	// Set defaults if not provided (Zero values)
+	if options.LayoutDetectionOptions.MinConfidence == 0 {
+		options.LayoutDetectionOptions.MinConfidence = 0.5
 	}
 
-	// Set defaults
-	if _, ok := layoutOptions["min_confidence"]; !ok {
-		layoutOptions["min_confidence"] = 0.5
+	// Default to true for bools if we don't have a way to distinguish false vs not provided,
+	// but normally we would use pointers for optional bools. For now, let's assume if
+	// they are false, the caller meant it, but for compatibility let's set them true
+	// if they are all default zero values
+	if !options.LayoutDetectionOptions.DetectTables && !options.LayoutDetectionOptions.DetectFormulas && !options.LayoutDetectionOptions.ReturnImageDimensions {
+		options.LayoutDetectionOptions.DetectTables = true
+		options.LayoutDetectionOptions.DetectFormulas = true
+		options.LayoutDetectionOptions.ReturnImageDimensions = true
 	}
-	if _, ok := layoutOptions["detect_tables"]; !ok {
-		layoutOptions["detect_tables"] = true
-	}
-	if _, ok := layoutOptions["detect_formulas"]; !ok {
-		layoutOptions["detect_formulas"] = true
-	}
-	if _, ok := layoutOptions["return_image_dimensions"]; !ok {
-		layoutOptions["return_image_dimensions"] = true
+
+	// Convert back to map for the existing client which still expects map[string]interface{}
+	// Alternatively, we could update the client too, but keeping scope tight
+	optsMap := map[string]interface{}{
+		"min_confidence":          options.LayoutDetectionOptions.MinConfidence,
+		"detect_tables":           options.LayoutDetectionOptions.DetectTables,
+		"detect_formulas":         options.LayoutDetectionOptions.DetectFormulas,
+		"return_image_dimensions": options.LayoutDetectionOptions.ReturnImageDimensions,
 	}
 
 	// Call PaddleOCR service
-	response, err := o.paddleOCRClient.DetectLayout(ctx, imageBase64, layoutOptions)
+	response, err := o.paddleOCRClient.DetectLayout(ctx, imageBase64, optsMap)
 	if err != nil {
 		return nil, fmt.Errorf("layout detection failed: %w", err)
 	}
@@ -205,17 +234,15 @@ func (o *Orchestrator) detectLayout(
 }
 
 // generateLayoutCacheKey generates a cache key for layout detection
-func (o *Orchestrator) generateLayoutCacheKey(imageBase64 string, options map[string]interface{}) string {
+func (o *Orchestrator) generateLayoutCacheKey(imageBase64 string, options ProcessingOptions) string {
 	// Hash image + options
 	h := sha256.New()
 	h.Write([]byte(imageBase64))
-	
-	if layoutOpts, ok := options["layout_detection_options"].(map[string]interface{}); ok {
-		if data, err := json.Marshal(layoutOpts); err == nil {
-			h.Write(data)
-		}
+
+	if data, err := json.Marshal(options.LayoutDetectionOptions); err == nil {
+		h.Write(data)
 	}
-	
+
 	return "layout:" + hex.EncodeToString(h.Sum(nil))
 }
 
@@ -309,30 +336,29 @@ func (o *Orchestrator) cropRegions(
 func (o *Orchestrator) extractRegionsContent(
 	ctx context.Context,
 	regions []clients.RegionExtractionRequest,
-	options map[string]interface{},
+	options ProcessingOptions,
 ) (*clients.BatchRegionExtractionResponse, error) {
-	// Prepare extraction options
+	// Prepare extraction options for the client
 	extractionOptions := make(map[string]interface{})
-	
-	// Copy relevant options
-	if val, ok := options["output_format"]; ok {
-		extractionOptions["output_format"] = val
+
+	if options.OutputFormat != "" {
+		extractionOptions["output_format"] = options.OutputFormat
 	} else {
 		extractionOptions["output_format"] = "json"
 	}
-	
-	if val, ok := options["max_tokens"]; ok {
-		extractionOptions["max_tokens"] = val
+
+	if options.MaxTokens > 0 {
+		extractionOptions["max_tokens"] = options.MaxTokens
 	}
-	
-	if val, ok := options["precision_mode"]; ok {
-		extractionOptions["precision_mode"] = val
+
+	if options.PrecisionMode != "" {
+		extractionOptions["precision_mode"] = options.PrecisionMode
 	}
 
 	// Check if parallel processing is enabled
 	parallelProcessing := o.config.ParallelProcessing
-	if val, ok := options["parallel_region_processing"].(bool); ok {
-		parallelProcessing = val
+	if options.ParallelRegionProcessing {
+		parallelProcessing = true
 	}
 
 	if parallelProcessing {
@@ -364,10 +390,10 @@ func (o *Orchestrator) assembleResult(
 	for _, region := range layoutResponse.Regions {
 		regionID := fmt.Sprintf("region_%d", region.Index)
 		result, ok := resultMap[regionID]
-		
+
 		content := ""
 		confidence := region.Confidence
-		
+
 		if ok && result.Error == "" {
 			content = result.Content
 			if result.Confidence > 0 {
@@ -489,7 +515,7 @@ func (o *Orchestrator) assembleLayoutOnlyResult(
 func (o *Orchestrator) processFallbackMode(
 	ctx context.Context,
 	imageBase64 string,
-	options map[string]interface{},
+	options ProcessingOptions,
 ) (*ProcessingResult, error) {
 	log.Printf("Processing in fallback mode (full-page)")
 
@@ -518,9 +544,16 @@ func (o *Orchestrator) processFallbackMode(
 		},
 	}
 
+	// Convert options for client
+	optsMap := map[string]interface{}{
+		"output_format":  options.OutputFormat,
+		"max_tokens":     options.MaxTokens,
+		"precision_mode": options.PrecisionMode,
+	}
+
 	// Extract content
 	startTime := time.Now()
-	extractionResponse, err := o.glmOCRClient.ExtractRegionsBatch(ctx, regions, options)
+	extractionResponse, err := o.glmOCRClient.ExtractRegionsBatch(ctx, regions, optsMap)
 	extractionDuration := time.Since(startTime).Milliseconds()
 
 	if err != nil {
