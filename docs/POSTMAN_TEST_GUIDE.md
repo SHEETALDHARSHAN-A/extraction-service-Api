@@ -41,6 +41,11 @@ Use this order in your collection:
 4. `GET {{baseUrl}}/jobs/{{jobId}}/result`
 5. Optional debug: `POST {{glmUrl}}/extract-region`
 
+Alternative single-call flow:
+
+1. `GET {{baseUrl}}/health`
+2. `POST {{baseUrl}}/jobs/extract` (returns final output directly, or `202` with status/result URLs on timeout)
+
 ## 3. Request 1: Health
 
 - Method: `GET`
@@ -274,6 +279,37 @@ Expected upload response:
 - HTTP `202` for new job
 - HTTP `200` if duplicate document was returned from cache
 - JSON includes `job_id`, `status_url`, `result_url`, and accepted `options`
+
+## 4A. Request 2A: Single Call Extract (`/jobs/extract`)
+
+- Method: `POST`
+- URL: `{{baseUrl}}/jobs/extract`
+- Header: `Authorization: Bearer {{apiKey}}`
+- Body: `form-data`
+
+Use the same fields as `/jobs/upload` (`document`, `output_formats`, coordinates/confidence/layout flags, etc.) plus these wait controls:
+
+| Option | Type | Default | Allowed / Example | What it does |
+|---|---|---|---|---|
+| `wait_timeout_seconds` | int | `1200` | `1200`, `1800`, `3600` | Maximum sync wait before timeout response |
+| `poll_interval_ms` | int | `1000` | `500`, `1000`, `2000` | Poll interval while waiting for completion |
+
+Server clamp rules:
+- `wait_timeout_seconds` is clamped to `10..7200`
+- `poll_interval_ms` is clamped to `200..5000`
+
+Recommended long-run payload in Postman:
+- `output_formats=structured`
+- `include_coordinates=true`
+- `include_word_confidence=true`
+- `include_page_layout=true`
+- `wait_timeout_seconds=1200`
+- `poll_interval_ms=1000`
+
+Expected responses:
+- `200` when extraction completes within wait window (full final `result` returned inline)
+- `202` when still processing after timeout (`job_id`, `status_url`, `result_url` returned)
+- `401` when bearer token is missing/invalid
 
 ## 5. Save `jobId` Automatically in Postman
 

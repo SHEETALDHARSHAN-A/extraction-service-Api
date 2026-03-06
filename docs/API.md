@@ -9,6 +9,16 @@
 ## Quick Start
 
 ```bash
+# One call: upload + wait + return final extraction result
+curl -X POST http://localhost:8000/jobs/extract \
+  -H "Authorization: Bearer tp-proj-dev-key-123" \
+  -F "document=@invoice.pdf" \
+  -F "output_formats=structured" \
+  -F "include_coordinates=true" \
+  -F "include_word_confidence=true" \
+  -F "include_page_layout=true" \
+  -F "wait_timeout_seconds=300"
+
 # 1. Extract text from a document
 curl -X POST http://localhost:8000/jobs/upload \
   -H "Authorization: Bearer tp-proj-dev-key-123" \
@@ -22,6 +32,61 @@ curl http://localhost:8000/jobs/<job_id> \
 # 3. Get result
 curl http://localhost:8000/jobs/<job_id>/result \
   -H "Authorization: Bearer tp-proj-dev-key-123"
+```
+
+---
+
+## POST /jobs/extract — Single Call (Upload + Process + Result)
+
+Use this endpoint when you want one API request to do everything.
+
+- Accepts the same multipart form fields as `POST /jobs/upload`.
+- Waits for completion and returns final result JSON directly.
+- If timeout is reached, returns `202` with `status_url` and `result_url`.
+
+### Additional Controls
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `wait_timeout_seconds` | Int | `1200` | Max wait time for synchronous response (clamped to `10..7200`) |
+| `poll_interval_ms` | Int | `1000` | Poll interval while waiting (clamped to `200..5000`) |
+
+### Success Response (HTTP 200)
+
+```json
+{
+  "job_id": "a1b2c3d4-e5f6-...",
+  "filename": "invoice.pdf",
+  "status": "COMPLETED",
+  "workflow_id": "doc-processing-a1b2c3d4-...",
+  "output_formats": "structured",
+  "options": {
+    "include_coordinates": true,
+    "include_word_confidence": true,
+    "include_page_layout": true
+  },
+  "page_count": 2,
+  "confidence": 0.93,
+  "cached": false,
+  "result": {
+    "job_id": "a1b2c3d4-e5f6-...",
+    "result": {
+      "text": "..."
+    }
+  }
+}
+```
+
+### Timeout Response (HTTP 202)
+
+```json
+{
+  "job_id": "a1b2c3d4-e5f6-...",
+  "status": "PROCESSING",
+  "status_url": "/jobs/a1b2c3d4-e5f6-...",
+  "result_url": "/jobs/a1b2c3d4-e5f6-.../result",
+  "message": "Processing started but did not finish before wait timeout. Poll status/result URLs."
+}
 ```
 
 ---

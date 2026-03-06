@@ -145,6 +145,9 @@ class BatchRegionResult(AppBaseModel):
     region_id: str = Field(..., description="Region identifier")
     content: str = Field(..., description="Extracted content")
     confidence: float = Field(..., description="Confidence score")
+    word_boxes: Optional[List[WordBoundingBox]] = Field(None, description="Word-level bounding boxes")
+    key_value_pairs: Optional[List[KeyValuePair]] = Field(None, description="Key-value pairs with bounding boxes")
+    bounding_boxes: Optional[List[Dict[str, Any]]] = Field(None, description="General bounding boxes")
     error: Optional[str] = Field(None, description="Error message if processing failed")
 
 

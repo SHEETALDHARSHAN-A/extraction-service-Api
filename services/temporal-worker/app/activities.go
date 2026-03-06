@@ -739,10 +739,13 @@ func (a *Activities) callGLMOCRGRPC(ctx context.Context, imagePath, prompt, opti
 
 	var response struct {
 		Results []struct {
-			RegionID   string  `json:"region_id"`
-			Content    string  `json:"content"`
-			Confidence float64 `json:"confidence"`
-			Error      string  `json:"error"`
+			RegionID      string                   `json:"region_id"`
+			Content       string                   `json:"content"`
+			Confidence    float64                  `json:"confidence"`
+			WordBoxes     []map[string]interface{} `json:"word_boxes"`
+			KeyValuePairs []map[string]interface{} `json:"key_value_pairs"`
+			BoundingBoxes []map[string]interface{} `json:"bounding_boxes"`
+			Error         string                   `json:"error"`
 		} `json:"results"`
 	}
 
@@ -762,7 +765,31 @@ func (a *Activities) callGLMOCRGRPC(ctx context.Context, imagePath, prompt, opti
 		return "", 0, fmt.Errorf("missing content in glm grpc response")
 	}
 
-	return first.Content, first.Confidence, nil
+	if len(first.WordBoxes) == 0 && len(first.KeyValuePairs) == 0 && len(first.BoundingBoxes) == 0 {
+		return first.Content, first.Confidence, nil
+	}
+
+	enriched := map[string]interface{}{}
+	if err := json.Unmarshal([]byte(first.Content), &enriched); err != nil {
+		enriched["text"] = first.Content
+	}
+
+	if len(first.WordBoxes) > 0 {
+		enriched["word_boxes"] = first.WordBoxes
+	}
+	if len(first.KeyValuePairs) > 0 {
+		enriched["key_value_pairs"] = first.KeyValuePairs
+	}
+	if len(first.BoundingBoxes) > 0 {
+		enriched["bounding_boxes"] = first.BoundingBoxes
+	}
+
+	enrichedContent, err := json.Marshal(enriched)
+	if err != nil {
+		return first.Content, first.Confidence, nil
+	}
+
+	return string(enrichedContent), first.Confidence, nil
 }
 
 // generateMockResult returns format-specific mock output

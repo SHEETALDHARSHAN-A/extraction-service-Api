@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +37,12 @@ const (
 	defaultPrecisionMode       = "high"
 	defaultMinConfidence       = "0.5"
 	defaultMaxParallelRegions  = "5"
+	defaultWaitTimeoutSeconds  = 1200
+	defaultPollIntervalMS      = 1000
+	minPollIntervalMS          = 200
+	maxPollIntervalMS          = 5000
+	minWaitTimeoutSeconds      = 10
+	maxWaitTimeoutSeconds      = 7200
 )
 
 var validOutputFormats = map[string]bool{
@@ -264,6 +272,279 @@ func (d *DocumentService) Upload(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusAccepted, successUploadResponse(jobID, header.Filename, we.GetID(), queueLength, estimatedWait, uploadOptions))
+}
+
+// Extract processes a document end-to-end in one API call and returns final output.
+// It accepts the same multipart payload/options as /jobs/upload plus:
+// - wait_timeout_seconds (default: 1200)
+// - poll_interval_ms (default: 1000)
+func (d *DocumentService) Extract(c *gin.Context) {
+	file, header, err := c.Request.FormFile("document")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No document provided"})
+		return
+	}
+	defer file.Close()
+
+	if !d.validateSize(c, header) {
+		return
+	}
+
+	uploadOptions, err := parseUploadOptions(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "valid_formats": sortedFormats()})
+		return
+	}
+
+	waitTimeoutSeconds := parseIntFormWithBounds(c, "wait_timeout_seconds", defaultWaitTimeoutSeconds, minWaitTimeoutSeconds, maxWaitTimeoutSeconds)
+	pollIntervalMS := parseIntFormWithBounds(c, "poll_interval_ms", defaultPollIntervalMS, minPollIntervalMS, maxPollIntervalMS)
+	waitTimeout := time.Duration(waitTimeoutSeconds) * time.Second
+	pollInterval := time.Duration(pollIntervalMS) * time.Millisecond
+
+	buffer, contentHash, err := readUploadPayload(file)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read document payload"})
+		return
+	}
+
+	if d.Cache != nil && contentHash != "" {
+		existingJobID, found := d.Cache.CheckDuplicate(context.Background(), contentHash)
+		if found {
+			var existingJob models.Job
+			if d.DB.First(&existingJob, "id = ?", existingJobID).Error == nil {
+				if existingJob.Status == models.StatusFailed {
+					log.Printf("♻️ Cache hit for FAILED job %s - evicting, will reprocess %s", existingJobID, header.Filename)
+					d.Cache.Evict(context.Background(), contentHash)
+				} else {
+					resultPayload, resultErr := d.waitForAndLoadResult(c.Request.Context(), existingJob.ID, waitTimeout, pollInterval)
+					if resultErr == nil {
+						c.JSON(http.StatusOK, d.successExtractResponse(&existingJob, uploadOptions, resultPayload, true))
+						return
+					}
+					if resultErr == context.DeadlineExceeded {
+						c.JSON(http.StatusAccepted, gin.H{
+							"job_id":          existingJob.ID,
+							"filename":        existingJob.Filename,
+							"status":          existingJob.Status,
+							"cached":          true,
+							"status_url":      fmt.Sprintf("/jobs/%s", existingJob.ID),
+							"result_url":      fmt.Sprintf("/jobs/%s/result", existingJob.ID),
+							"message":         "Document is already submitted and still processing. Poll the status/result URLs.",
+							"wait_timeout_ms": waitTimeout.Milliseconds(),
+						})
+						return
+					}
+
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":  "Failed to fetch cached job result",
+						"job_id": existingJob.ID,
+					})
+					return
+				}
+			}
+		}
+	}
+
+	jobID := uuid.New().String()
+	objectName := fmt.Sprintf("raw/%s/%s", jobID, header.Filename)
+	storagePath, err := d.Storage.UploadFile(
+		context.Background(),
+		objectName,
+		io.NopCloser(bytes.NewReader(buffer.Bytes())),
+		header.Size,
+		header.Header.Get("Content-Type"),
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload document"})
+		log.Printf("Upload error: %v", err)
+		return
+	}
+
+	if d.Cache != nil && contentHash != "" {
+		d.Cache.MarkProcessed(context.Background(), contentHash, jobID)
+	}
+
+	job := models.Job{
+		ID:            jobID,
+		Filename:      header.Filename,
+		FileSize:      header.Size,
+		ContentType:   header.Header.Get("Content-Type"),
+		StoragePath:   storagePath,
+		Status:        models.StatusUploaded,
+		OutputFormats: uploadOptions.OutputFormats,
+	}
+	if err := d.DB.Create(&job).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job record"})
+		return
+	}
+	middleware.RecordJobCreated()
+
+	queuedJob := buildQueuedJob(jobID, header.Size, uploadOptions)
+	queueLength, estimatedWait, queued := d.tryEnqueue(c, queuedJob, &job)
+	if !queued {
+		return
+	}
+
+	if d.Temporal == nil {
+		c.JSON(http.StatusAccepted, queuedResponse(jobID, header.Filename, "", uploadOptions.OutputFormats, queueLength, estimatedWait, "Document uploaded and queued. Temporal is currently unavailable, it will be processed shortly."))
+		return
+	}
+
+	workflowOptions := client.StartWorkflowOptions{
+		ID:        fmt.Sprintf("doc-processing-%s", jobID),
+		TaskQueue: d.TaskQueue,
+	}
+	workflowInput := buildWorkflowInput(jobID, header, storagePath, uploadOptions)
+
+	we, err := d.Temporal.ExecuteWorkflow(context.Background(), workflowOptions, "DocumentProcessingWorkflow", workflowInput)
+	if err != nil {
+		log.Printf("⚠️ Failed to start workflow for job %s: %v. Job remains queued.", jobID, err)
+		c.JSON(http.StatusAccepted, gin.H{
+			"error":          "Failed to immediately start processing workflow, but job is queued",
+			"job_id":         jobID,
+			"status":         "QUEUED",
+			"queue_position": queueLength,
+		})
+		return
+	}
+
+	d.DB.Model(&job).Updates(map[string]interface{}{
+		"workflow_id": we.GetID(),
+		"run_id":      we.GetRunID(),
+		"status":      models.StatusProcessing,
+	})
+	job.WorkflowID = we.GetID()
+	job.RunID = we.GetRunID()
+	job.Status = models.StatusProcessing
+
+	resultPayload, resultErr := d.waitForAndLoadResult(c.Request.Context(), jobID, waitTimeout, pollInterval)
+	if resultErr == context.DeadlineExceeded {
+		c.JSON(http.StatusAccepted, gin.H{
+			"job_id":               jobID,
+			"filename":             header.Filename,
+			"status":               models.StatusProcessing,
+			"workflow_id":          we.GetID(),
+			"queue_position":       queueLength,
+			"output_formats":       uploadOptions.OutputFormats,
+			"options":              buildOptionsMap(uploadOptions),
+			"status_url":           fmt.Sprintf("/jobs/%s", jobID),
+			"result_url":           fmt.Sprintf("/jobs/%s/result", jobID),
+			"message":              "Processing started but did not finish before wait timeout. Poll status/result URLs.",
+			"wait_timeout_seconds": waitTimeoutSeconds,
+		})
+		return
+	}
+
+	if resultErr != nil {
+		var currentJob models.Job
+		if d.DB.First(&currentJob, "id = ?", jobID).Error == nil && currentJob.Status == models.StatusFailed {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"job_id":  jobID,
+				"status":  currentJob.Status,
+				"error":   "Document processing failed",
+				"details": currentJob.ErrorMessage,
+			})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"job_id": jobID,
+			"error":  "Failed to load extraction result",
+		})
+		return
+	}
+
+	_ = d.DB.First(&job, "id = ?", jobID)
+	c.JSON(http.StatusOK, d.successExtractResponse(&job, uploadOptions, resultPayload, false))
+}
+
+func (d *DocumentService) waitForAndLoadResult(parentCtx context.Context, jobID string, waitTimeout time.Duration, pollInterval time.Duration) (interface{}, error) {
+	ctx, cancel := context.WithTimeout(parentCtx, waitTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	var lastJob models.Job
+
+	for {
+		if err := d.DB.First(&lastJob, "id = ?", jobID).Error; err != nil {
+			return nil, err
+		}
+
+		syncJobWithWorkflowStatus(ctx, &lastJob)
+
+		switch lastJob.Status {
+		case models.StatusCompleted:
+			if lastJob.ResultPath == "" {
+				return nil, fmt.Errorf("job completed but result path is empty")
+			}
+			return d.loadResultPayload(ctx, lastJob.ResultPath)
+		case models.StatusFailed:
+			return nil, fmt.Errorf("job failed: %s", lastJob.ErrorMessage)
+		}
+
+		select {
+		case <-ctx.Done():
+			if ctx.Err() == context.DeadlineExceeded {
+				return nil, context.DeadlineExceeded
+			}
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (d *DocumentService) loadResultPayload(ctx context.Context, resultPath string) (interface{}, error) {
+	reader, err := d.Storage.DownloadFile(ctx, resultPath)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed interface{}
+	if err := json.Unmarshal(body, &parsed); err == nil {
+		return parsed, nil
+	}
+
+	return string(body), nil
+}
+
+func (d *DocumentService) successExtractResponse(job *models.Job, opts *UploadOptions, resultPayload interface{}, cached bool) gin.H {
+	response := gin.H{
+		"job_id":         job.ID,
+		"filename":       job.Filename,
+		"status":         job.Status,
+		"workflow_id":    job.WorkflowID,
+		"output_formats": opts.OutputFormats,
+		"options":        buildOptionsMap(opts),
+		"page_count":     job.PageCount,
+		"confidence":     job.Confidence,
+		"result":         resultPayload,
+		"cached":         cached,
+	}
+
+	return response
+}
+
+func parseIntFormWithBounds(c *gin.Context, key string, defaultValue, minValue, maxValue int) int {
+	raw := strings.TrimSpace(c.DefaultPostForm(key, strconv.Itoa(defaultValue)))
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultValue
+	}
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }
 
 func (d *DocumentService) validateSize(c *gin.Context, header *multipart.FileHeader) bool {

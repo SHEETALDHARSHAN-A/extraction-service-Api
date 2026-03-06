@@ -231,6 +231,7 @@ func main() {
 	{
 		// Document processing
 		api.POST("/jobs/upload", uploadDocument)
+		api.POST("/jobs/extract", extractDocument)
 		api.POST("/jobs/batch", batchHandler().Handle)
 		api.GET("/jobs", listJobs)
 		api.GET("/jobs/:id", getJobStatus)
@@ -366,6 +367,10 @@ func checkServiceHealth(url string) gin.H {
 
 func uploadDocument(c *gin.Context) {
 	documentService.Upload(c)
+}
+
+func extractDocument(c *gin.Context) {
+	documentService.Extract(c)
 }
 
 func getJobStatus(c *gin.Context) {

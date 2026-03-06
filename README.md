@@ -61,6 +61,28 @@ This starts:
 test_local_e2e.bat
 ```
 
+### 4a. Single API Call (Upload + Wait + Final Result)
+
+Use this when you want one request to return the final extraction output directly.
+
+```bash
+curl -X POST http://localhost:8000/jobs/extract \
+	-H "Authorization: Bearer tp-proj-dev-key-123" \
+	-F "document=@testfiles/test_simple.png" \
+	-F "output_formats=structured" \
+	-F "include_coordinates=true" \
+	-F "include_word_confidence=true" \
+	-F "include_page_layout=true" \
+	-F "wait_timeout_seconds=1200" \
+	-F "poll_interval_ms=1000"
+```
+
+Timeout controls for long-running documents:
+- `wait_timeout_seconds` default is `1200` (20 min), allowed range `10..7200`.
+- `poll_interval_ms` default is `1000`, allowed range `200..5000`.
+
+If processing exceeds your wait timeout, the endpoint returns `202` with `status_url` and `result_url`.
+
 ### 5. Stop local infra
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\stop_local_infra.ps1

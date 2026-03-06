@@ -1143,6 +1143,9 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
         logger.info(f"Fast mode enabled for batch: max_tokens={max_tokens} [request_id={request_id}]")
 
     output_format = options.get("output_format", "text")
+    granularity = options.get("granularity", "block")
+    include_coordinates = options.get("include_coordinates", True)
+    include_confidence = options.get("include_confidence", True)
     
     # Process each region
     for region in request.regions:
@@ -1210,6 +1213,9 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
                 region_id=region.region_id,
                 content="",
                 confidence=0.0,
+                word_boxes=None,
+                key_value_pairs=None,
+                bounding_boxes=None,
                 error=str(e)
             ))
 
@@ -1217,10 +1223,61 @@ async def extract_regions_batch(request: BatchRegionExtractionRequest, req: Requ
             total_prompt_tokens += prompt_tokens
             total_completion_tokens += completion_tokens
 
+            word_boxes = None
+            key_value_pairs = None
+            bounding_boxes = None
+
+            page_bbox = infer_page_bbox(region.image)
+
+            if include_coordinates:
+                if fast_mode:
+                    bounding_boxes = build_line_bounding_boxes(content, page_bbox, confidence)
+                else:
+                    bounding_boxes = [{
+                        "text": content,
+                        "bbox": page_bbox,
+                        "confidence": confidence if include_confidence else 1.0,
+                        "type": region.region_type,
+                    }]
+
+            if (not fast_mode) and granularity == "word" and word_extractor:
+                words = word_extractor.extract_words(content, page_bbox, confidence)
+                words = word_extractor.handle_hyphenated_words(words)
+                words = word_extractor.sort_words_reading_order(words)
+
+                if include_coordinates:
+                    word_boxes = [
+                        WordBoundingBox(
+                            word=w.word,
+                            bbox=w.bbox,
+                            confidence=w.confidence if include_confidence else 1.0,
+                        )
+                        for w in words
+                    ]
+
+            if (not fast_mode) and output_format == "key_value" and kv_extractor:
+                pairs = kv_extractor.extract_key_values(content, page_bbox)
+                pairs = kv_extractor.handle_multi_value_keys(pairs)
+
+                if include_coordinates:
+                    key_value_pairs = [
+                        KeyValuePair(
+                            key=p.key,
+                            key_bbox=p.key_bbox,
+                            value=p.value,
+                            value_bbox=p.value_bbox,
+                            confidence=p.confidence if include_confidence else 1.0,
+                        )
+                        for p in pairs
+                    ]
+
             results.append(BatchRegionResult(
                 region_id=region.region_id,
                 content=content,
                 confidence=confidence,
+                word_boxes=word_boxes,
+                key_value_pairs=key_value_pairs,
+                bounding_boxes=bounding_boxes,
                 error=None
             ))
 
