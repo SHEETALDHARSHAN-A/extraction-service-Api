@@ -335,47 +335,62 @@ async def lifespan(app: FastAPI):
         if gpu_monitor:
             gpu_monitor.log_memory_usage("after model load")
         
-        # Model warmup: run dummy inference to reduce first-request latency
-        try:
-            logger.info("Starting model warmup...")
-            warmup_start = time.time()
-            
-            # Create a small dummy image (1x1 pixel base64 encoded)
-            import base64
-            from PIL import Image
-            import io
-            
-            # Create a tiny test image
-            dummy_img = Image.new('RGB', (100, 100), color='white')
-            buffer = io.BytesIO()
-            dummy_img.save(buffer, format='PNG')
-            dummy_image_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-            
-            # Run dummy inference
-            if settings.use_isolated_gpu_executor and gpu_executor:
-                gpu_executor.execute(
-                    image_base64=dummy_image_b64,
-                    prompt="Extract text",
-                    max_tokens=10,
-                    output_format="text",
-                    timeout_seconds=min(30, settings.request_timeout_seconds),
+        # Model warmup: run dummy inference to reduce first-request latency.
+        if settings.startup_warmup_enabled:
+            skip_cpu_warmup = (
+                not settings.use_isolated_gpu_executor
+                and inference_engine is not None
+                and inference_engine.device == "cpu"
+                and not settings.startup_warmup_on_cpu
+            )
+
+            if skip_cpu_warmup:
+                logger.info(
+                    "Skipping startup warmup on CPU (set STARTUP_WARMUP_ON_CPU=true to enable)"
                 )
-            elif inference_engine:
-                _, _, _, _ = inference_engine.extract_content(
-                    image_base64=dummy_image_b64,
-                    prompt="Extract text",
-                    max_tokens=10,
-                    output_format="text"
-                )
-            
-            warmup_time = time.time() - warmup_start
-            logger.info(f"Model warmup completed in {warmup_time:.2f}s")
-            
-            if gpu_monitor:
-                gpu_monitor.log_memory_usage("after model warmup")
-        
-        except Exception as warmup_error:
-            logger.warning(f"Model warmup failed (non-critical): {warmup_error}")
+            else:
+                try:
+                    logger.info("Starting model warmup...")
+                    warmup_start = time.time()
+
+                    # Create a tiny test image for one short warmup pass.
+                    import base64
+                    from PIL import Image
+                    import io
+
+                    dummy_img = Image.new('RGB', (100, 100), color='white')
+                    buffer = io.BytesIO()
+                    dummy_img.save(buffer, format='PNG')
+                    dummy_image_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                    warmup_max_tokens = max(1, int(settings.startup_warmup_max_tokens))
+
+                    # Run dummy inference
+                    if settings.use_isolated_gpu_executor and gpu_executor:
+                        gpu_executor.execute(
+                            image_base64=dummy_image_b64,
+                            prompt="Extract text",
+                            max_tokens=warmup_max_tokens,
+                            output_format="text",
+                            timeout_seconds=min(30, settings.request_timeout_seconds),
+                        )
+                    elif inference_engine:
+                        _, _, _, _ = inference_engine.extract_content(
+                            image_base64=dummy_image_b64,
+                            prompt="Extract text",
+                            max_tokens=warmup_max_tokens,
+                            output_format="text"
+                        )
+
+                    warmup_time = time.time() - warmup_start
+                    logger.info(f"Model warmup completed in {warmup_time:.2f}s")
+
+                    if gpu_monitor:
+                        gpu_monitor.log_memory_usage("after model warmup")
+
+                except Exception as warmup_error:
+                    logger.warning(f"Model warmup failed (non-critical): {warmup_error}")
+        else:
+            logger.info("Startup warmup disabled via STARTUP_WARMUP_ENABLED=false")
     
     except Exception as e:
         logger.error(f"Failed to initialize inference engine: {e}")

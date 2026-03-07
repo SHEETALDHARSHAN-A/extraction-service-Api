@@ -44,6 +44,13 @@ class GLMInferenceEngine:
             from transformers import AutoProcessor, AutoModelForImageTextToText
             
             logger.info(f"Loading GLM-OCR model from {self.model_path}")
+            requested_device = (settings.glm_device_preference or "auto").strip().lower()
+            if requested_device not in {"auto", "cpu", "cuda"}:
+                logger.warning(
+                    "Invalid GLM_DEVICE_PREFERENCE='%s'; defaulting to 'auto'",
+                    requested_device,
+                )
+                requested_device = "auto"
             
             # Load processor
             self.processor = AutoProcessor.from_pretrained(
@@ -51,28 +58,50 @@ class GLMInferenceEngine:
             )
             
             # Load model
-            self.model = AutoModelForImageTextToText.from_pretrained(
-                self.model_path,
-                torch_dtype=torch.float16,
-                low_cpu_mem_usage=True
-            )
+            model_kwargs = {
+                "low_cpu_mem_usage": True,
+            }
+            try:
+                # Newer transformers versions prefer `dtype`.
+                self.model = AutoModelForImageTextToText.from_pretrained(
+                    self.model_path,
+                    dtype=torch.float16,
+                    **model_kwargs,
+                )
+            except TypeError:
+                # Backward compatibility for older transformers versions.
+                self.model = AutoModelForImageTextToText.from_pretrained(
+                    self.model_path,
+                    torch_dtype=torch.float16,
+                    **model_kwargs,
+                )
             
             # Try to move to GPU
-            if torch.cuda.is_available():
+            if requested_device == "cpu":
+                logger.info("GLM_DEVICE_PREFERENCE=cpu set; forcing CPU inference")
+                self.device = "cpu"
+                self.model = self.model.to("cpu").float()
+            elif torch.cuda.is_available():
                 try:
                     torch.cuda.empty_cache()
                     self.model = self.model.to("cuda")
                     self.device = "cuda"
                     logger.info("Model loaded on GPU (CUDA)")
                 except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-                    logger.warning(f"GPU OOM ({e}), falling back to CPU")
+                    if self._is_cuda_recoverable_error(e):
+                        logger.warning(f"CUDA unavailable/busy/OOM ({e}), falling back to CPU")
+                    else:
+                        raise
                     torch.cuda.empty_cache()
                     self.device = "cpu"
                     self.model = self.model.to("cpu").float()
             else:
-                logger.info("CUDA not available, using CPU")
+                if requested_device == "cuda":
+                    logger.warning("GLM_DEVICE_PREFERENCE=cuda set, but CUDA is not available. Using CPU")
+                else:
+                    logger.info("CUDA not available, using CPU")
                 self.device = "cpu"
-                self.model = self.model.float()
+                self.model = self.model.to("cpu").float()
             
             self.model.eval()
             self._initialized = True
@@ -82,6 +111,20 @@ class GLMInferenceEngine:
             logger.error(f"Failed to load GLM-OCR model: {e}")
             self._initialized = False
             raise
+
+    @staticmethod
+    def _is_cuda_recoverable_error(error: Exception) -> bool:
+        """Return True when CUDA failure should trigger CPU fallback instead of hard-fail."""
+        message = str(error).lower()
+        markers = (
+            "out of memory",
+            "cuda-capable device",
+            "device(s) is/are busy or unavailable",
+            "cuda error",
+            "cublas",
+            "cudnn",
+        )
+        return any(marker in message for marker in markers)
     
     def is_ready(self) -> bool:
         """Check if the model is ready for inference."""
@@ -112,10 +155,12 @@ class GLMInferenceEngine:
         try:
             # Decode image
             image = self._decode_base64_image(image_base64)
-            image = self._resize_for_low_vram(image)
 
+            # Chunk large pages before global downscale so each segment retains more detail.
             if self._should_chunk_image(image):
                 return self._extract_content_chunked(image, prompt, max_tokens)
+
+            image = self._resize_for_low_vram(image)
 
             return self._extract_single_image(image, prompt, max_tokens)
             

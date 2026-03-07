@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # Model settings
     glm_model_path: str = os.getenv("GLM_MODEL_PATH", "zai-org/GLM-OCR")
     glm_precision_mode: str = os.getenv("GLM_PRECISION_MODE", "high")
+    glm_device_preference: str = os.getenv("GLM_DEVICE_PREFERENCE", "auto").lower()
     cuda_visible_devices: Optional[str] = os.getenv("CUDA_VISIBLE_DEVICES")
     
     # Processing settings
@@ -43,6 +44,9 @@ class Settings(BaseSettings):
     # Isolated GPU executor: run inference in a dedicated child process that can be
     # force-killed on timeout (true cancellation semantics).
     use_isolated_gpu_executor: bool = os.getenv("USE_ISOLATED_GPU_EXECUTOR", "false").lower() == "true"
+    startup_warmup_enabled: bool = os.getenv("STARTUP_WARMUP_ENABLED", "true").lower() == "true"
+    startup_warmup_on_cpu: bool = os.getenv("STARTUP_WARMUP_ON_CPU", "false").lower() == "true"
+    startup_warmup_max_tokens: int = int(os.getenv("STARTUP_WARMUP_MAX_TOKENS", "10"))
     
     # Logging settings
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
@@ -84,6 +88,7 @@ def _validate_env_authority() -> None:
     critical_keys = {
         "GLM_MODEL_PATH",
         "GLM_PRECISION_MODE",
+        "GLM_DEVICE_PREFERENCE",
         "REQUEST_TIMEOUT_SECONDS",
         "LOW_VRAM_MAX_TOKENS",
         "LOW_VRAM_MAX_IMAGE_EDGE",
@@ -95,6 +100,9 @@ def _validate_env_authority() -> None:
         "CHUNK_OVERLAP_PX",
         "CHUNK_SEGMENT_MAX_TOKENS",
         "USE_ISOLATED_GPU_EXECUTOR",
+        "STARTUP_WARMUP_ENABLED",
+        "STARTUP_WARMUP_ON_CPU",
+        "STARTUP_WARMUP_MAX_TOKENS",
     }
 
     conflicts = []

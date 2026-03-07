@@ -28,7 +28,7 @@ class ExtractionOptions(AppBaseModel):
         description="Include confidence scores in output"
     )
     fast_mode: bool = Field(
-        default=False,
+        default=True,
         description="Enable low-latency extraction mode with lightweight post-processing"
     )
     

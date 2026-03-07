@@ -27,10 +27,10 @@ import (
 
 const (
 	maxUploadDocumentSizeBytes = 10 * 1024 * 1024
-	defaultOutputFormats       = "text"
+	defaultOutputFormats       = "structured"
 	defaultPrompt              = ""
 	defaultLanguage            = "auto"
-	defaultGranularity         = "block"
+	defaultGranularity         = "word"
 	defaultMaxPages            = "0"
 	defaultTemperature         = "0.0"
 	defaultMaxTokens           = "4096"
@@ -659,11 +659,11 @@ func parseUploadOptions(c *gin.Context) (*UploadOptions, error) {
 	opts := &UploadOptions{
 		OutputFormats:            c.DefaultPostForm("output_formats", defaultOutputFormats),
 		Prompt:                   c.DefaultPostForm("prompt", defaultPrompt),
-		IncludeCoordinates:       parseBoolForm(c, "include_coordinates", false),
+		IncludeCoordinates:       parseBoolForm(c, "include_coordinates", true),
 		FastMode:                 parseBoolForm(c, "fast_mode", false),
-		IncludeWordConfidence:    parseBoolForm(c, "include_word_confidence", false),
-		IncludeLineConfidence:    parseBoolForm(c, "include_line_confidence", false),
-		IncludePageLayout:        parseBoolForm(c, "include_page_layout", false),
+		IncludeWordConfidence:    parseBoolForm(c, "include_word_confidence", true),
+		IncludeLineConfidence:    parseBoolForm(c, "include_line_confidence", true),
+		IncludePageLayout:        parseBoolForm(c, "include_page_layout", true),
 		Language:                 c.DefaultPostForm("language", defaultLanguage),
 		Granularity:              c.DefaultPostForm("granularity", defaultGranularity),
 		RedactPII:                parseBoolForm(c, "redact_pii", false),
